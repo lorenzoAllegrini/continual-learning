@@ -25,6 +25,11 @@ To install SpaceAI and all its dependencies, you can run the following commands:
 pip install spaceai
 
 ```
+ 
+## NASA PNN-LSTM (Continual Learning)
+
+See `docs/experiments/nasa_pnn_lstm.md` for a walkthrough using a Progressive
+Neural Network with LSTM encoders on the NASA SMAP/MSL datasets.
 
 ## Credits
 We thank [eclypse-org](https://github.com/eclypse-org) and [Jacopo Massa](https://github.com/jacopo-massa) for the structure and the template of the documentation!

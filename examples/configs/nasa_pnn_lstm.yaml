@@ -1,0 +1,10 @@
+root: datasets
+dataset: smap
+seq_len: 128
+stride: 1
+hidden: 64
+num_layers: 1
+dropout: 0.0
+lr: 0.001
+batch_size: 32
+epochs: 1
