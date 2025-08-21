@@ -1,6 +1,4 @@
-from . import (
-    predictors,
-    anomaly,
-)
+from . import anomaly, predictors
+from .lstm_encoder import LSTMEncoder
 
-__all__ = ["predictors", "anomaly"]
+__all__ = ["predictors", "anomaly", "LSTMEncoder"]
