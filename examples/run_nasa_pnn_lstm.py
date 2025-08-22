@@ -1,90 +1,88 @@
-"""Run NASA PNN-LSTM experiment."""
+import os
 
-from __future__ import annotations
+import pandas as pd
+from spaceai.data import NASA
+from spaceai.benchmark import NASABenchmark
+from spaceai.models.anomaly import Telemanom
+from spaceai.models.predictors import PNN
 
-import argparse
-import json
-from pathlib import Path
-
-import numpy as np
 import torch
-from avalanche.training import Naive
 from torch import nn
-from torch.optim import Adam
-from torch.utils.data import DataLoader
+from torch import optim
 
-from spaceai.benchmarks.nasa_benchmark import make_nasa_benchmark
-from spaceai.eval.dynamic_threshold import detect_anomalies
-from spaceai.eval.range_metrics import range_metrics
-from spaceai.models.pnn_lstm import LSTMPNN
+from spaceai.benchmark.callbacks import SystemMonitorCallback
+from avalanche.training.strategies import Naive
 
+def main():
+    benchmark = NASABenchmark(
+        run_id="nasa_lstm",
+        exp_dir="experiments",
+        seq_length=250,
+        n_predictions=10,
+        data_root="datasets",
+    )
+    callbacks = [SystemMonitorCallback()]
 
-def main() -> None:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--root", type=str, required=True)
-    parser.add_argument("--dataset", choices=["smap", "msl"], required=True)
-    parser.add_argument("--seq-len", type=int, default=128)
-    parser.add_argument("--stride", type=int, default=1)
-    parser.add_argument("--hidden", type=int, default=64)
-    parser.add_argument("--num-layers", type=int, default=1)
-    parser.add_argument("--dropout", type=float, default=0.0)
-    parser.add_argument("--lr", type=float, default=1e-3)
-    parser.add_argument("--batch-size", type=int, default=32)
-    parser.add_argument("--epochs", type=int, default=1)
-    args = parser.parse_args()
-
-    train_stream, test_stream, meta = make_nasa_benchmark(
-        args.root, args.dataset, seq_len=args.seq_len, stride=args.stride
+    predictor = PNN(
+        1,
+        nasa_channel.in_features_size,
+        [80, 80],
+        10,
+        reduce_out="first",
+        dropout=0.3,
+        washout=249,
     )
 
-    model = LSTMPNN(
-        input_size=1,
-        hidden_size=args.hidden,
-        num_layers=args.num_layers,
-        dropout=args.dropout,
-    )
-    optimizer = Adam(model.parameters(), lr=args.lr)
-    criterion = nn.MSELoss()
-    strategy = Naive(
-        model,
-        optimizer,
-        criterion,
-        train_mb_size=args.batch_size,
-        eval_mb_size=args.batch_size,
-        device="cpu",
-    )
+    channels = NASA.channel_ids
+    for i, channel_id in enumerate(channels):
+        print(f"{i+1}/{len(channels)}: {channel_id}")
 
-    out_dir = Path("outputs") / "nasa_pnn_lstm"
-    out_dir.mkdir(parents=True, exist_ok=True)
+        nasa_channel = NASA("datasets", channel_id, mode="anomaly", train=False)
 
-    for exp_id, (train_exp, test_exp) in enumerate(zip(train_stream, test_stream)):
-        model.adaptation(train_exp)
-        strategy.train(train_exp, max_epochs=args.epochs)
-
-        preds = []
-        targets = []
-        for x, y, t, _ in DataLoader(
-            test_exp.dataset, batch_size=args.batch_size, shuffle=False
-        ):
-            pred = model(x, t)
-            preds.append(pred.detach().cpu())
-            targets.append(y.detach().cpu())
-        preds_t = torch.cat(preds).squeeze()
-        targets_t = torch.cat(targets).squeeze()
-        errors = (preds_t - targets_t).numpy() ** 2
-
-        intervals = detect_anomalies(errors)
-        metrics = range_metrics(intervals, [])
-
-        cid = meta["mapping"][exp_id]
-        np.savetxt(
-            out_dir / f"{cid}_anomalies.csv",
-            np.array(intervals),
-            fmt="%d",
-            delimiter=",",
+        detector = Telemanom(
+            pruning_factor=0.13, force_early_anomaly=channel_id == "C-2"
         )
-        with open(out_dir / f"{cid}_metrics.json", "w") as f:
-            json.dump(metrics, f)
+
+        criterion = nn.MSELoss()
+        optimizer = optim.Adam(predictor.parameters(), lr=0.001)
+        epochs = 35
+
+        # definizione della strategia naive
+        cl_strategy = Naive(
+            model=predictor,
+            optimizer=optimizer,
+            criterion=criterion,
+            train_mb_size=64,     # batch_size
+            train_epochs=epochs,  # numero epoche
+            eval_mb_size=64,      # batch_size in valutazione
+            device="cuda" if torch.cuda.is_available() else "cpu"
+        )
+
+        benchmark.run_pnn(
+            channel_id,
+            predictor,
+            detector,
+            strategy=cl_strategy,
+            overlapping_train=True,
+            restore_predictor=False,
+            callbacks=callbacks,
+        )
+
+    results_df = pd.read_csv(os.path.join(benchmark.run_dir, "results.csv"))
+    tp = results_df["true_positives"].sum()
+    fp = results_df["false_positives"].sum()
+    fn = results_df["false_negatives"].sum()
+
+    total_precision = tp / (tp + fp)
+    total_recall = tp / (tp + fn)
+    total_f1 = 2 * (total_precision * total_recall) / (total_precision + total_recall)
+
+    print("True Positives: ", tp)
+    print("False Positives: ", fp)
+    print("False Negatives: ", fn)
+    print("Total Precision: ", total_precision)
+    print("Total Recall: ", total_recall)
+    print("Total F1: ", total_f1)
 
 
 if __name__ == "__main__":

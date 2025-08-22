@@ -16,6 +16,8 @@ from torch.utils.data import (
     DataLoader,
     Subset,
 )
+from torch import nn
+from torch import optim
 from tqdm import tqdm
 
 from spaceai.data import NASA
@@ -31,7 +33,9 @@ if TYPE_CHECKING:
 import logging
 
 from .benchmark import Benchmark
-
+from avalanche.benchmarks.generators import dataset_benchmark
+from avalanche.benchmarks.utils import make_avalanche_dataset  # alias di AvalancheDataset
+from avalanche.training.strategies import Naive
 
 class NASABenchmark(Benchmark):
 
@@ -128,6 +132,180 @@ class NASABenchmark(Benchmark):
                 if eval_channel is not None
                 else None
             )
+            callback_handler.start()
+            predictor.stateful = False
+            train_history = predictor.fit(
+                train_loader=train_loader,
+                valid_loader=eval_loader,
+                **fit_predictor_args,
+            )
+            callback_handler.stop()
+            results.update(
+                {
+                    f"train_{k}": v
+                    for k, v in callback_handler.collect(reset=True).items()
+                }
+            )
+            logging.info(
+                f"Training time on channel {channel_id}: {results['train_time']}"
+            )
+            train_history = pd.DataFrame.from_records(train_history).to_csv(
+                os.path.join(self.run_dir, f"train_history-{channel_id}.csv"),
+                index=False,
+            )
+            predictor_path = os.path.join(self.run_dir, f"predictor-{channel_id}.pt")
+            predictor.save(predictor_path)
+            results["disk_usage"] = os.path.getsize(predictor_path)
+
+        if predictor.model is not None:
+            predictor.model.eval()
+        logging.info(f"Predicting the test data for channel {channel_id}...")
+        test_loader = DataLoader(
+            test_channel,
+            batch_size=1,
+            shuffle=False,
+            collate_fn=seq_collate_fn(n_inputs=2, mode="time"),
+        )
+        callback_handler.start()
+        predictor.stateful = True
+        y_pred, y_trg = zip(
+            *[
+                (
+                    predictor(x.to(predictor.device)).detach().cpu().squeeze().numpy(),
+                    y.detach().cpu().squeeze().numpy(),
+                )
+                for x, y in tqdm(test_loader, desc="Predicting")
+            ]
+        )
+        y_pred, y_trg = [
+            np.concatenate(seq)[test_channel.window_size - 1 :]
+            for seq in [y_pred, y_trg]
+        ]
+        callback_handler.stop()
+        results.update(
+            {f"predict_{k}": v for k, v in callback_handler.collect(reset=True).items()}
+        )
+        results["test_loss"] = np.mean(((y_pred - y_trg) ** 2))  # type: ignore[operator]
+        logging.info(f"Test loss for channel {channel_id}: {results['test_loss']}")
+        logging.info(
+            f"Prediction time for channel {channel_id}: {results['predict_time']}"
+        )
+
+        # Testing the detector
+        logging.info(f"Detecting anomalies for channel {channel_id}")
+        callback_handler.start()
+        if len(y_trg) < 2500:
+            detector.ignore_first_n_factor = 1
+        if len(y_trg) < 1800:
+            detector.ignore_first_n_factor = 0
+        pred_anomalies = detector.detect_anomalies(y_pred, y_trg)
+        pred_anomalies += detector.flush_detector()
+        callback_handler.stop()
+        results.update(
+            {f"detect_{k}": v for k, v in callback_handler.collect(reset=True).items()}
+        )
+        logging.info(
+            f"Detection time for channel {channel_id}: {results['detect_time']}"
+        )
+
+        true_anomalies = test_channel.anomalies
+        classification_results = self.compute_classification_metrics(
+            true_anomalies, pred_anomalies
+        )
+        results.update(classification_results)
+        if train_history is not None:
+            results["train_loss"] = train_history[-1]["loss_train"]
+            if eval_loader is not None:
+                results["eval_loss"] = train_history[-1]["loss_eval"]
+
+        logging.info(f"Results for channel {channel_id}")
+
+        self.all_results.append(results)
+
+        pd.DataFrame.from_records(self.all_results).to_csv(
+            os.path.join(self.run_dir, "results.csv"), index=False
+        )
+    
+
+    def run_pnn(
+        self,
+        channel_id: str,
+        predictor: SequenceModel,
+        detector: AnomalyDetector,
+        fit_predictor_args: Optional[Dict[str, Any]] = None,
+        perc_eval: Optional[float] = 0.2,
+        restore_predictor: bool = False,
+        overlapping_train: bool = True,
+        callbacks: Optional[List[Callback]] = None,
+        call_every_ms: int = 100,
+    ):
+        """Runs the benchmark for a given channel.
+
+        Args:
+            channel_id (str): the ID of the channel to be used
+            predictor (SequenceModel): the sequence model to be trained
+            detector (AnomalyDetector): the anomaly detector to be used
+            fit_predictor_args (Optional[Dict[str, Any]]): additional arguments for the predictor's fit method
+            perc_eval (Optional[float]): the percentage of the training data to be used for evaluation
+            restore_predictor (bool): whether to restore the predictor from a previous run
+            overlapping_train (bool): whether to use overlapping sequences for training
+            callbacks (Optional[List[Callback]]): a list of callbacks to be used during benchmark
+            call_every_ms (int): the interval at which the callbacks are called
+        """
+        callback_handler = CallbackHandler(
+            callbacks=callbacks if callbacks is not None else [],
+            call_every_ms=call_every_ms,
+        )
+        train_channel, test_channel = self.load_channel(
+            channel_id, overlapping_train=overlapping_train
+        )
+        os.makedirs(self.run_dir, exist_ok=True)
+
+        results: Dict[str, Any] = {"channel_id": channel_id}
+        train_history = None
+        if (
+            os.path.exists(os.path.join(self.run_dir, f"predictor-{channel_id}.pt"))
+            and restore_predictor
+        ):
+            logging.info(f"Restoring predictor for channel {channel_id}...")
+            predictor.load(os.path.join(self.run_dir, f"predictor-{channel_id}.pt"))
+
+        elif fit_predictor_args is not None:
+            logging.info(f"Fitting the predictor for channel {channel_id}...")
+            # Training the predictor
+            
+            eval_channel = None
+            if perc_eval is not None:
+                # Split the training data into training and evaluation sets
+                indices = np.arange(len(train_channel))
+                np.random.shuffle(indices)
+                eval_size = int(len(train_channel) * perc_eval)
+                eval_channel = Subset(train_channel, indices[:eval_size])
+                train_channel = Subset(train_channel, indices[eval_size:])
+            
+            task_label = int(channel_id.split("_")[1])
+            train_ad = make_avalanche_dataset(train_channel, task_labels=task_label)
+            eval_ad  = make_avalanche_dataset(eval_channel,  task_labels=task_label)
+
+            benchmark = dataset_benchmark(
+                train_datasets=[train_ad],  # lista di esperienze di train
+                test_datasets=[eval_ad],    # lista di esperienze di test
+            )
+
+            optimizer = fit_predictor_args.pop("optimizer", 1e-3)
+            criterion = fit_predictor_args.pop("criterion", optim.Adam(predictor.model.parameters(), lr=0.001))
+            batch_size = fit_predictor_args.pop("batch_size", 64)
+
+            strategy = Naive(
+                model=predictor,
+                optimizer=optimizer,
+                criterion=criterion,
+                train_mb_size=64,
+                train_epochs=5,
+                eval_mb_size=64,
+                device="cuda"
+            )
+
             callback_handler.start()
             predictor.stateful = False
             train_history = predictor.fit(
