@@ -13,6 +13,13 @@ class MultiHeadRegressor(DynamicModule):
         self.out_features = out_features
         self.heads = nn.ModuleDict()
 
+    def adaptation(self, experience):
+        """Aggiunge la testa per il task corrente se non esiste."""
+        task_label = self._get_single_task_label(experience.dataset)
+        key = str(task_label)
+        if key not in self.heads:
+            self.heads[key] = nn.Linear(self.in_features, self.out_features)
+
     def _get_single_task_label(self, ds):
         tl = ds.targets_task_labels
         if isinstance(tl, torch.Tensor):
