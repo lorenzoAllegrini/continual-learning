@@ -21,7 +21,7 @@ def main():
         run_id="nasa_lstm",
         exp_dir="experiments",
         seq_length=250,
-        n_predictions=10,
+        n_predictions=1,
         data_root="datasets",
     )
     callbacks = [SystemMonitorCallback()]
@@ -33,7 +33,7 @@ def main():
     predictor = PNN(
         num_layers=1,
         in_features=sample_channel.in_features_size,
-        hidden_features_per_column=100,
+        hidden_features_per_column=80,
         adapter='mlp',
         base_predictor_args=dict(
             input_size=sample_channel.in_features_size,

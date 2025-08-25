@@ -80,12 +80,11 @@ class CLTrainer:
         scaler = torch.cuda.amp.GradScaler(enabled=self.use_amp)
         autocast_ctx = torch.cuda.amp.autocast if self.use_amp else nullcontext
 
-        for _ in range(self.train_epochs):
-        
-            for x, y in dl:
-             
+        for _ in range(self.train_epochs):  
+            for x, y in dl:   
                 x = x.to(self.device); y = y.to(self.device)
-
+                print(y.shape)
+                print(y[0])
                 self.optimizer.zero_grad(set_to_none=True)
                 with autocast_ctx():
                     out = self.model(x, task)
