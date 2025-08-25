@@ -186,6 +186,7 @@ class PNNLayer(MultiTaskModule):
         self.train_adaptation(experience.dataset)
 
     def train_adaptation(self, dataset: AvalancheDataset):
+        print("train_adaptation")
         # ⚠️ RIMUOVI questa riga che causava l’errore:
         # super().train_adaptation(dataset)
         task_labels_raw = dataset.targets_task_labels
@@ -201,7 +202,11 @@ class PNNLayer(MultiTaskModule):
         if not self.task_to_module_idx:
             self.task_to_module_idx[task_label] = 0
         else:
-
+            if task_label in self.task_to_module_idx:
+                return
+            if len(self.task_to_module_idx) == 0:
+                self.task_to_module_idx[task_label] = 0  # prima colonna già creata nel __init__
+                return
             self.task_to_module_idx[task_label] = self.num_columns
             self._add_column()
 
@@ -226,10 +231,10 @@ class PNNLayer(MultiTaskModule):
         :return:
         """
         col_idx = self.task_to_module_idx[task_label]
-        
+        print(f"col_idx: {col_idx}")
         hs = []
         for ii in range(col_idx + 1):
-            print(self.columns)
+            #print(self.columns)
             hs.append(self.columns[ii](x[: ii + 1]))
         return hs
 
@@ -293,13 +298,16 @@ class PNN(MultiTaskModule):
         self.regressor.adaptation(experience)
 
     def forward_single_task(self, x, task_label):
+        print("forward single task")
         #x = x.contiguous().view(x.size(0), self.in_features)
 
         num_columns = self.layers[0].num_columns
         col_idx = self.layers[-1].task_to_module_idx[task_label]
+        print(col_idx)
 
         x = [x for _ in range(num_columns)]
         for lay in self.layers:
+            print(f"lay: {lay}")
             x = [F.relu(el) for el in lay.forward_single_task(x, task_label)]
         # ⬇️ usa la regressor head
         return self.regressor.forward_single_task(x[col_idx], task_label)
