@@ -39,19 +39,19 @@ class CLTrainer:
         self.use_amp = bool(use_amp and self.device.type == "cuda")
 
     @torch.no_grad()
-    def evaluate_experience(self, experience):
+    def evaluate_experience(self, data, task):
         self.model.eval()
         dl = DataLoader(
-            experience.dataset,
+            data,
             batch_size=self.eval_mb_size,
             shuffle=False,
             num_workers=self.num_workers,
-            collate_fn=self.collate_fn,
+            collate_fn=seq_collate_fn(n_inputs=2, mode="batch"),
         )
         total, n = 0.0, 0
-        for x, y, t in dl:
+        for x, y in dl:
             x = x.to(self.device); y = y.to(self.device)
-            out = self.model(x, t)
+            out = self.model(x, task)
             loss = self.criterion(out.squeeze(-1), y.squeeze(-1))
             bs = x.size(0)
             total += loss.item() * bs
@@ -81,10 +81,8 @@ class CLTrainer:
         autocast_ctx = torch.cuda.amp.autocast if self.use_amp else nullcontext
 
         for _ in range(self.train_epochs):  
-            for x, y in dl:   
+            for x, y in dl:
                 x = x.to(self.device); y = y.to(self.device)
-                print(y.shape)
-                print(y[0])
                 self.optimizer.zero_grad(set_to_none=True)
                 with autocast_ctx():
                     out = self.model(x, task)
@@ -107,4 +105,4 @@ class CLTrainer:
         for exp in train_stream:
             self.train_experience(exp)
 
-all = ["CLTrainer"]
+__all__ = ["CLTrainer"]
