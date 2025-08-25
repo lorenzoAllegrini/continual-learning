@@ -35,14 +35,6 @@ if TYPE_CHECKING:
 
 import logging
 
-from avalanche.benchmarks.scenarios.dataset_scenario import (
-    benchmark_from_datasets,
-)
-from avalanche.benchmarks.utils import (  # alias di AvalancheDataset
-    AvalancheDataset,
-    make_avalanche_dataset,
-)
-
 from .benchmark import Benchmark
 
 
@@ -107,13 +99,14 @@ class NASABenchmark(Benchmark):
             channel_id (str): the ID of the channel to be used
             predictor (SequenceModel): the sequence model to be trained
             detector (AnomalyDetector): the anomaly detector to be used
-            fit_predictor_args (Optional[Dict[str, Any]]): additional arguments for the predictor's fit method
             perc_eval (Optional[float]): the percentage of the training data to be used for evaluation
             restore_predictor (bool): whether to restore the predictor from a previous run
             overlapping_train (bool): whether to use overlapping sequences for training
             callbacks (Optional[List[Callback]]): a list of callbacks to be used during benchmark
             call_every_ms (int): the interval at which the callbacks are called
         """
+        if strategy is None:
+            raise ValueError("strategy must be provided")
         callback_handler = CallbackHandler(
             callbacks=callbacks if callbacks is not None else [],
             call_every_ms=call_every_ms,
@@ -289,7 +282,7 @@ class NASABenchmark(Benchmark):
         os.makedirs(self.run_dir, exist_ok=True)
 
         results: Dict[str, Any] = {"channel_id": channel_id}
-        train_history = None
+        task_label = int(channel_id.split("-")[1])
         if (
             os.path.exists(os.path.join(self.run_dir, f"predictor-{channel_id}.pt"))
             and restore_predictor
@@ -299,51 +292,16 @@ class NASABenchmark(Benchmark):
 
         elif strategy is not None:
             logging.info(f"Fitting the predictor for channel {channel_id}...")
-            # Training the predictor
-
             eval_channel = None
             if perc_eval is not None:
-                # Split the training data into training and evaluation sets
                 indices = np.arange(len(train_channel))
                 np.random.shuffle(indices)
                 eval_size = int(len(train_channel) * perc_eval)
                 eval_channel = Subset(train_channel, indices[:eval_size])
                 train_channel = Subset(train_channel, indices[eval_size:])
 
-            task_label = int(channel_id.split("-")[1])
-            strategy.train_experience(train_channel, task_label)
-
-            task_labels = [task_label] * len(train_channel)
-
-            train_ad = AvalancheDataset(
-                train_channel, collate_fn=seq_collate_fn(n_inputs=2, mode="time")
-            )
-
-            if eval_channel is not None:
-                eval_ad = AvalancheDataset(eval_channel)
-            else:
-                eval_ad = None
-
-            train_ad = train_ad.update_data_attribute(
-                "targets_task_labels", task_labels
-            )
-
-            if eval_channel is not None:
-                eval_task_labels = [task_label] * len(eval_channel)
-                eval_ad = eval_ad.update_data_attribute(
-                    "targets_task_labels", eval_task_labels
-                )
-            else:
-                eval_ad = None
-
-            benchmark = benchmark_from_datasets(train=[train_ad], test=[])
             callback_handler.start()
-            exp = benchmark.train_stream[
-                0
-            ]  # unica experience che contiene TUTTO train_ad
-
-            strategy.train_experience(exp)
-
+            strategy.train_experience(train_channel, task_label)
             callback_handler.stop()
             results.update(
                 {
@@ -354,27 +312,33 @@ class NASABenchmark(Benchmark):
             logging.info(
                 f"Training time on channel {channel_id}: {results['train_time']}"
             )
-            train_history = pd.DataFrame.from_records(train_history).to_csv(
-                os.path.join(self.run_dir, f"train_history-{channel_id}.csv"),
-                index=False,
-            )
+
+            if eval_channel is not None:
+                results["eval_loss"] = strategy.evaluate_experience(
+                    eval_channel, task_label
+                )
 
         callback_handler.start()
-        y_pred, y_true = [], []
+        test_loader = DataLoader(
+            test_channel,
+            batch_size=1,
+            shuffle=False,
+            collate_fn=seq_collate_fn(n_inputs=2, mode="time"),
+        )
         strategy.model.eval()
-        for exp in benchmark.test_stream:  # puoi avere più esperienze di test
-            test_loader = strategy.make_test_dataloader(exp.dataset)
-
-            with torch.no_grad():
-                for x, y, _ in tqdm(test_loader, desc="Predicting"):
-                    x = x.to(strategy.device)
-                    logits = strategy.model(x)
-                    preds = logits.detach().cpu().squeeze().numpy()
-                    target = y.detach().cpu().squeeze().numpy()
-
-                    y_pred.append(preds)
-                    y_true.append(target)
-
+        y_pred, y_trg = zip(
+            *[
+                (
+                    strategy.model(x.to(strategy.device), task_label)
+                    .detach()
+                    .cpu()
+                    .squeeze()
+                    .numpy(),
+                    y.detach().cpu().squeeze().numpy(),
+                )
+                for x, y in tqdm(test_loader, desc="Predicting")
+            ]
+        )
         y_pred, y_trg = [
             np.concatenate(seq)[test_channel.window_size - 1 :]
             for seq in [y_pred, y_trg]
@@ -389,7 +353,6 @@ class NASABenchmark(Benchmark):
             f"Prediction time for channel {channel_id}: {results['predict_time']}"
         )
 
-        # Testing the detector
         logging.info(f"Detecting anomalies for channel {channel_id}")
         callback_handler.start()
         if len(y_trg) < 2500:
@@ -410,11 +373,7 @@ class NASABenchmark(Benchmark):
         classification_results = self.compute_classification_metrics(
             true_anomalies, pred_anomalies
         )
-        """results.update(classification_results)
-        if train_history is not None:
-            results["train_loss"] = train_history[-1]["loss_train"]
-            if eval_loader is not None:
-                results["eval_loss"] = train_history[-1]["loss_eval"]
+        results.update(classification_results)
 
         logging.info(f"Results for channel {channel_id}")
 
@@ -422,7 +381,7 @@ class NASABenchmark(Benchmark):
 
         pd.DataFrame.from_records(self.all_results).to_csv(
             os.path.join(self.run_dir, "results.csv"), index=False
-        )"""
+        )
 
     def load_channel(
         self, channel_id: str, overlapping_train: bool = True
