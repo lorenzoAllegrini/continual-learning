@@ -65,9 +65,9 @@ class CLTrainer:
         train_ad = train_ad.update_data_attribute("targets_task_labels", [task] * len(data))
         benchmark = benchmark_from_datasets(train=[train_ad], test=[])
         avalanche_model_adaptation(self.model, benchmark.train_stream[0])
-        print("finita adaptation")
+      
         # 2) Dataloader
-        print(data)
+        
         dl = DataLoader(
             data,
             batch_size=64,
@@ -81,9 +81,9 @@ class CLTrainer:
         autocast_ctx = torch.cuda.amp.autocast if self.use_amp else nullcontext
 
         for _ in range(self.train_epochs):
-            print(dl)
+        
             for x, y in dl:
-                print(f"x: {x}, y:{y}")
+             
                 x = x.to(self.device); y = y.to(self.device)
 
                 self.optimizer.zero_grad(set_to_none=True)

@@ -119,7 +119,7 @@ class PNNColumn(nn.Module):
             )
         elif adapter == "mlp":
             self.adapter = MLPAdapter(
-                in_features, out_features_per_column, num_prev_modules
+                out_features_per_column, out_features_per_column, num_prev_modules
             )
         else:
             raise ValueError("`adapter` must be one of: {'mlp', `linear'}.")
@@ -129,8 +129,10 @@ class PNNColumn(nn.Module):
             param.requires_grad = False
 
     def forward(self, x):
-
+        print(np.array(x).shape)
         prev_xs, last_x = x[:-1], x[-1]
+        print(np.array(prev_xs).shape)
+        print(prev_xs)
         hs = self.adapter(prev_xs)
         hs += self.itoh(last_x)
         return hs
@@ -224,8 +226,10 @@ class PNNLayer(MultiTaskModule):
         :return:
         """
         col_idx = self.task_to_module_idx[task_label]
+        
         hs = []
         for ii in range(col_idx + 1):
+            print(self.columns)
             hs.append(self.columns[ii](x[: ii + 1]))
         return hs
 
@@ -289,7 +293,7 @@ class PNN(MultiTaskModule):
         self.regressor.adaptation(experience)
 
     def forward_single_task(self, x, task_label):
-        x = x.contiguous().view(x.size(0), self.in_features)
+        #x = x.contiguous().view(x.size(0), self.in_features)
 
         num_columns = self.layers[0].num_columns
         col_idx = self.layers[-1].task_to_module_idx[task_label]
