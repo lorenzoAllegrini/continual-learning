@@ -39,6 +39,7 @@ class LSTM_Encoder(SequenceModel):
         super().__init__(
             device, stateful=stateful, reduce_out=reduce_out, washout=washout
         )
+        print("init lstm")
         self.input_size: int = input_size
         self.hidden_sizes: List[int] = hidden_sizes
         self.reduce_out: Optional[Literal["first", "mean"]] = reduce_out
@@ -87,6 +88,7 @@ class _LSTM_Encoder(nn.Module):
             unit_forget_bias (bool, optional): Whether to use unit forget bias. Defaults to True.
         """
         super().__init__()
+        print("init lstm encoder")
         self.input_size: int = input_size
         self.hidden_sizes: List[int] = hidden_sizes
         self.unit_forget_bias: bool = unit_forget_bias
@@ -103,6 +105,7 @@ class _LSTM_Encoder(nn.Module):
         )
 
         self._initialize_weights()
+        print("finito init lstm encoder")
 
     def _initialize_weights(self):
         for layer in self.modules():
@@ -140,6 +143,7 @@ class _LSTM_Encoder(nn.Module):
         Returns:
             Union[torch.Tensor, Tuple[torch.Tensor, List[torch.Tensor]]]: Output data.
         """
+        print("forward lstm encoder")
         h = x
         states = []
         for i, lstm in enumerate(self.lstm_layers):

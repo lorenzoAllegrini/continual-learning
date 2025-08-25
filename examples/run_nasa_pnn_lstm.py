@@ -11,9 +11,12 @@ from torch import nn
 from torch import optim
 
 from spaceai.benchmark.callbacks import SystemMonitorCallback
-from avalanche.training.strategies import Naive
+from avalanche.training.supervised import Naive
+from spaceai.benchmark.utils import CLTrainer
+from spaceai.data.utils import seq_collate_fn
 
 def main():
+    print("dfsahoiu------------------------------------------------------------------------")
     benchmark = NASABenchmark(
         run_id="nasa_lstm",
         exp_dir="experiments",
@@ -23,17 +26,23 @@ def main():
     )
     callbacks = [SystemMonitorCallback()]
 
-    predictor = PNN(
-        1,
-        nasa_channel.in_features_size,
-        [80, 80],
-        10,
-        reduce_out="first",
-        dropout=0.3,
-        washout=249,
-    )
-
     channels = NASA.channel_ids
+
+    sample_channel = NASA("datasets", channels[0], mode="anomaly", train=False)
+
+    predictor = PNN(
+        num_layers=1,
+        in_features=sample_channel.in_features_size,
+        hidden_features_per_column=100,
+        adapter='mlp',
+        base_predictor_args=dict(
+            input_size=sample_channel.in_features_size,
+            hidden_sizes=[80, 80],
+            dropout=0.3,
+            washout=249,
+        ),
+    )
+    
     for i, channel_id in enumerate(channels):
         print(f"{i+1}/{len(channels)}: {channel_id}")
 
@@ -48,21 +57,15 @@ def main():
         epochs = 35
 
         # definizione della strategia naive
-        cl_strategy = Naive(
-            model=predictor,
-            optimizer=optimizer,
-            criterion=criterion,
-            train_mb_size=64,     # batch_size
-            train_epochs=epochs,  # numero epoche
-            eval_mb_size=64,      # batch_size in valutazione
-            device="cuda" if torch.cuda.is_available() else "cpu"
-        )
+        trainer = CLTrainer(model=predictor, optimizer=optimizer,
+                          criterion=criterion, device="cuda" if torch.cuda.is_available() else "cpu",
+                          collate_fn=seq_collate_fn(n_inputs=2, mode="time"))
 
         benchmark.run_pnn(
             channel_id,
             predictor,
             detector,
-            strategy=cl_strategy,
+            strategy=trainer,
             overlapping_train=True,
             restore_predictor=False,
             callbacks=callbacks,

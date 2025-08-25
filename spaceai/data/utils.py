@@ -95,6 +95,7 @@ def seq_collate_fn(
                 for i in range(n_inputs):
                     inputs[i].append(item[i])
             inputs = [torch.cat(seq, dim=0).unsqueeze(1) for seq in inputs]
+            print(inputs)
             return inputs
 
     if mode == "batch":

@@ -16,6 +16,7 @@ from torch.utils.data import (
     DataLoader,
     Subset,
 )
+import torch
 from torch import nn
 from torch import optim
 from tqdm import tqdm
@@ -33,9 +34,23 @@ if TYPE_CHECKING:
 import logging
 
 from .benchmark import Benchmark
-from avalanche.benchmarks.generators import dataset_benchmark
+from avalanche.benchmarks.utils import AvalancheDataset
+from avalanche.benchmarks.scenarios.dataset_scenario import benchmark_from_datasets
 from avalanche.benchmarks.utils import make_avalanche_dataset  # alias di AvalancheDataset
-from avalanche.training.strategies import Naive
+# opzionale: collate "salvagente" per dtype/shape
+def my_collate(batch):
+    import numpy as np, torch
+    print(batch.shape)
+    def to_tensor(v):
+        if isinstance(v, torch.Tensor): return v.float()
+        if isinstance(v, (np.ndarray, list, tuple)): return torch.as_tensor(v, dtype=torch.float32)
+        return torch.tensor(float(v), dtype=torch.float32)
+    xs, ys, tls = zip(*batch)           # supponiamo (x, y, task_label)
+    xs = torch.stack([to_tensor(x) for x in xs], dim=0)
+    ys = torch.stack([to_tensor(y) for y in ys], dim=0)
+    tls = torch.as_tensor(tls, dtype=torch.long)
+    return xs, ys, tls
+
 
 class NASABenchmark(Benchmark):
 
@@ -116,6 +131,7 @@ class NASABenchmark(Benchmark):
                 eval_size = int(len(train_channel) * perc_eval)
                 eval_channel = Subset(train_channel, indices[:eval_size])
                 train_channel = Subset(train_channel, indices[eval_size:])
+            print(train_channel)
             train_loader = DataLoader(
                 train_channel,
                 batch_size=batch_size,
@@ -232,7 +248,7 @@ class NASABenchmark(Benchmark):
         channel_id: str,
         predictor: SequenceModel,
         detector: AnomalyDetector,
-        fit_predictor_args: Optional[Dict[str, Any]] = None,
+        strategy: Optional[Dict[str, Any]] = None,
         perc_eval: Optional[float] = 0.2,
         restore_predictor: bool = False,
         overlapping_train: bool = True,
@@ -270,7 +286,7 @@ class NASABenchmark(Benchmark):
             logging.info(f"Restoring predictor for channel {channel_id}...")
             predictor.load(os.path.join(self.run_dir, f"predictor-{channel_id}.pt"))
 
-        elif fit_predictor_args is not None:
+        elif strategy is not None:
             logging.info(f"Fitting the predictor for channel {channel_id}...")
             # Training the predictor
             
@@ -282,37 +298,35 @@ class NASABenchmark(Benchmark):
                 eval_size = int(len(train_channel) * perc_eval)
                 eval_channel = Subset(train_channel, indices[:eval_size])
                 train_channel = Subset(train_channel, indices[eval_size:])
+
+            task_label = int(channel_id.split("-")[1])
+            strategy.train_experience(train_channel, task_label)
             
-            task_label = int(channel_id.split("_")[1])
-            train_ad = make_avalanche_dataset(train_channel, task_labels=task_label)
-            eval_ad  = make_avalanche_dataset(eval_channel,  task_labels=task_label)
+            task_labels = [task_label] * len(train_channel)
+           
+            train_ad = AvalancheDataset(train_channel, collate_fn=seq_collate_fn(n_inputs=2, mode="time"))
+  
+            if eval_channel is not None:
+                eval_ad  = AvalancheDataset(eval_channel)
+            else:
+                eval_ad = None
 
-            benchmark = dataset_benchmark(
-                train_datasets=[train_ad],  # lista di esperienze di train
-                test_datasets=[eval_ad],    # lista di esperienze di test
-            )
+            train_ad = train_ad.update_data_attribute("targets_task_labels", task_labels)
 
-            optimizer = fit_predictor_args.pop("optimizer", 1e-3)
-            criterion = fit_predictor_args.pop("criterion", optim.Adam(predictor.model.parameters(), lr=0.001))
-            batch_size = fit_predictor_args.pop("batch_size", 64)
+            if eval_channel is not None:
+                eval_task_labels = [task_label] * len(eval_channel)
+                eval_ad = eval_ad.update_data_attribute("targets_task_labels", eval_task_labels)
+            else:
+                eval_ad = None
 
-            strategy = Naive(
-                model=predictor,
-                optimizer=optimizer,
-                criterion=criterion,
-                train_mb_size=64,
-                train_epochs=5,
-                eval_mb_size=64,
-                device="cuda"
-            )
-
+            benchmark = benchmark_from_datasets(train=[train_ad], test=[])
             callback_handler.start()
-            predictor.stateful = False
-            train_history = predictor.fit(
-                train_loader=train_loader,
-                valid_loader=eval_loader,
-                **fit_predictor_args,
-            )
+            exp = benchmark.train_stream[0]          # unica experience che contiene TUTTO train_ad
+
+            strategy.train_experience(exp) 
+            
+
+
             callback_handler.stop()
             results.update(
                 {
@@ -327,30 +341,23 @@ class NASABenchmark(Benchmark):
                 os.path.join(self.run_dir, f"train_history-{channel_id}.csv"),
                 index=False,
             )
-            predictor_path = os.path.join(self.run_dir, f"predictor-{channel_id}.pt")
-            predictor.save(predictor_path)
-            results["disk_usage"] = os.path.getsize(predictor_path)
 
-        if predictor.model is not None:
-            predictor.model.eval()
-        logging.info(f"Predicting the test data for channel {channel_id}...")
-        test_loader = DataLoader(
-            test_channel,
-            batch_size=1,
-            shuffle=False,
-            collate_fn=seq_collate_fn(n_inputs=2, mode="time"),
-        )
         callback_handler.start()
-        predictor.stateful = True
-        y_pred, y_trg = zip(
-            *[
-                (
-                    predictor(x.to(predictor.device)).detach().cpu().squeeze().numpy(),
-                    y.detach().cpu().squeeze().numpy(),
-                )
-                for x, y in tqdm(test_loader, desc="Predicting")
-            ]
-        )
+        y_pred, y_true = [], []
+        strategy.model.eval()
+        for exp in benchmark.test_stream:  # puoi avere più esperienze di test
+            test_loader = strategy.make_test_dataloader(exp.dataset)
+
+            with torch.no_grad():
+                for x, y, _ in tqdm(test_loader, desc="Predicting"):
+                    x = x.to(strategy.device)
+                    logits = strategy.model(x)
+                    preds = logits.detach().cpu().squeeze().numpy()
+                    target = y.detach().cpu().squeeze().numpy()
+
+                    y_pred.append(preds)
+                    y_true.append(target)
+
         y_pred, y_trg = [
             np.concatenate(seq)[test_channel.window_size - 1 :]
             for seq in [y_pred, y_trg]
@@ -386,7 +393,7 @@ class NASABenchmark(Benchmark):
         classification_results = self.compute_classification_metrics(
             true_anomalies, pred_anomalies
         )
-        results.update(classification_results)
+        """results.update(classification_results)
         if train_history is not None:
             results["train_loss"] = train_history[-1]["loss_train"]
             if eval_loader is not None:
@@ -398,7 +405,7 @@ class NASABenchmark(Benchmark):
 
         pd.DataFrame.from_records(self.all_results).to_csv(
             os.path.join(self.run_dir, "results.csv"), index=False
-        )
+        )"""
 
     def load_channel(
         self, channel_id: str, overlapping_train: bool = True
