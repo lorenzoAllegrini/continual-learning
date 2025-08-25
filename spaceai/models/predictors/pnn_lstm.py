@@ -1,13 +1,3 @@
-import torch
-import torch.nn.functional as F
-from torch import nn
-from .lstm_encoder import _LSTM_Encoder
-from .seq_model import SequenceModel
-from avalanche.benchmarks.utils import AvalancheDataset
-from avalanche.models import MultiTaskModule, DynamicModule
-from avalanche.models import MultiHeadClassifier
-from .multihead_regressor import MultiHeadRegressor
-
 from typing import (
     Any,
     Callable,
@@ -17,10 +7,26 @@ from typing import (
     Optional,
     Union,
 )
+
+import numpy as np
+import torch
+import torch.nn.functional as F
+from avalanche.benchmarks.utils import AvalancheDataset
+from avalanche.models import (
+    DynamicModule,
+    MultiHeadClassifier,
+    MultiTaskModule,
+)
+from torch import nn
+
+from .lstm_encoder import _LSTM_Encoder
+from .multihead_regressor import MultiHeadRegressor
+from .seq_model import SequenceModel
+
+
 class LinearAdapter(nn.Module):
-    """
-    Linear adapter for Progressive Neural Networks.
-    """
+    """Linear adapter for Progressive Neural Networks."""
+
     def __init__(self, in_features, out_features_per_column, num_prev_modules):
         """
         :param in_features: size of each input sample
@@ -44,11 +50,11 @@ class LinearAdapter(nn.Module):
 
 
 class MLPAdapter(nn.Module):
-    """
-     MLP adapter for Progressive Neural Networks.
-    """
-    def __init__(self, in_features, out_features_per_column, num_prev_modules,
-                 activation=F.relu):
+    """MLP adapter for Progressive Neural Networks."""
+
+    def __init__(
+        self, in_features, out_features_per_column, num_prev_modules, activation=F.relu
+    ):
         """
         :param in_features: size of each input sample
         :param out_features_per_column: size of each output sample
@@ -63,8 +69,7 @@ class MLPAdapter(nn.Module):
             return  # first adapter is empty
 
         # Eq. 2 - MLP adapter. Not needed for the first task.
-        self.V = nn.Linear(in_features * num_prev_modules,
-                           out_features_per_column)
+        self.V = nn.Linear(in_features * num_prev_modules, out_features_per_column)
         self.alphas = nn.Parameter(torch.randn(num_prev_modules))
         self.U = nn.Linear(out_features_per_column, out_features_per_column)
 
@@ -73,22 +78,28 @@ class MLPAdapter(nn.Module):
             return 0  # first adapter is empty
 
         assert len(x) == self.num_prev_modules
-        assert len(x[0].shape) == 2, \
-            "Inputs to MLPAdapter should have two dimensions: " \
+        assert len(x[0].shape) == 2, (
+            "Inputs to MLPAdapter should have two dimensions: "
             "<batch_size, num_features>."
+        )
         for i, el in enumerate(x):
             x[i] = self.alphas[i] * el
         x = torch.cat(x, dim=1)
         x = self.U(self.activation(self.V(x)))
         return x
 
+
 class PNNColumn(nn.Module):
-    """
-    Progressive Neural Network column.
-    """
-    def __init__(self, in_features, out_features_per_column, num_prev_modules, 
-                 adapter='mlp', base_predictor_args=None):
-        print(base_predictor_args)
+    """Progressive Neural Network column."""
+
+    def __init__(
+        self,
+        in_features,
+        out_features_per_column,
+        num_prev_modules,
+        adapter="mlp",
+        base_predictor_args=None,
+    ):
         """
         :param in_features: size of each input sample
         :param out_features_per_column:
@@ -102,12 +113,14 @@ class PNNColumn(nn.Module):
         self.num_prev_modules = num_prev_modules
 
         self.itoh = _LSTM_Encoder(**base_predictor_args)
-        if adapter == 'linear':
-            self.adapter = LinearAdapter(in_features, out_features_per_column,
-                                         num_prev_modules)
-        elif adapter == 'mlp':
-            self.adapter = MLPAdapter(in_features, out_features_per_column,
-                                      num_prev_modules)
+        if adapter == "linear":
+            self.adapter = LinearAdapter(
+                in_features, out_features_per_column, num_prev_modules
+            )
+        elif adapter == "mlp":
+            self.adapter = MLPAdapter(
+                in_features, out_features_per_column, num_prev_modules
+            )
         else:
             raise ValueError("`adapter` must be one of: {'mlp', `linear'}.")
 
@@ -116,7 +129,7 @@ class PNNColumn(nn.Module):
             param.requires_grad = False
 
     def forward(self, x):
-        
+
         prev_xs, last_x = x[:-1], x[-1]
         hs = self.adapter(prev_xs)
         hs += self.itoh(last_x)
@@ -124,14 +137,20 @@ class PNNColumn(nn.Module):
 
 
 class PNNLayer(MultiTaskModule):
-    """ Progressive Neural Network layer.
+    """Progressive Neural Network layer.
 
-        The adaptation phase assumes that each experience is a separate task.
-        Multiple experiences with the same task label or multiple task labels
-        within the same experience will result in a runtime error.
-        """
-    def __init__(self, in_features, out_features_per_column, adapter='mlp', base_predictor_args=None):
-        
+    The adaptation phase assumes that each experience is a separate task. Multiple
+    experiences with the same task label or multiple task labels within the same
+    experience will result in a runtime error.
+    """
+
+    def __init__(
+        self,
+        in_features,
+        out_features_per_column,
+        adapter="mlp",
+        base_predictor_args=None,
+    ):
         """
         :param in_features: size of each input sample
         :param out_features_per_column:
@@ -145,8 +164,13 @@ class PNNLayer(MultiTaskModule):
         self.base_predictor_args = base_predictor_args
         # convert from task label to module list order
         self.task_to_module_idx = {}
-        first_col = PNNColumn(in_features,out_features_per_column,
-                              0, adapter=adapter, base_predictor_args=base_predictor_args)
+        first_col = PNNColumn(
+            in_features,
+            out_features_per_column,
+            0,
+            adapter=adapter,
+            base_predictor_args=base_predictor_args,
+        )
         self.columns = nn.ModuleList([first_col])
 
     @property
@@ -162,15 +186,12 @@ class PNNLayer(MultiTaskModule):
     def train_adaptation(self, dataset: AvalancheDataset):
         # ⚠️ RIMUOVI questa riga che causava l’errore:
         # super().train_adaptation(dataset)
-        print(f"dataset: {dataset}")
         task_labels_raw = dataset.targets_task_labels
         if isinstance(task_labels_raw, torch.Tensor):
-            print("is tensor!")
             uniq = torch.unique(task_labels_raw)
             assert len(uniq) == 1, "PNN assumes a single task per experience."
             task_label = int(uniq.item())
         else:
-            print("is not tensor!")
             s = set(task_labels_raw)
             assert len(s) == 1, "PNN assumes a single task per experience."
             task_label = next(iter(s))
@@ -178,12 +199,11 @@ class PNNLayer(MultiTaskModule):
         if not self.task_to_module_idx:
             self.task_to_module_idx[task_label] = 0
         else:
-        
+
             self.task_to_module_idx[task_label] = self.num_columns
             self._add_column()
 
     def _add_column(self):
-        print("add_column")
         for p in self.parameters():
             p.requires_grad = False
         self.columns.append(
@@ -192,14 +212,12 @@ class PNNLayer(MultiTaskModule):
                 self.out_features_per_column,
                 self.num_columns,
                 adapter=self.adapter,
-                base_predictor_args=self.base_predictor_args   
+                base_predictor_args=self.base_predictor_args,
             )
         )
-        print("finish add column")
 
     def forward_single_task(self, x, task_label):
-        print("forward single task layer")
-        """ Forward.
+        """Forward.
 
         :param x: list of inputs.
         :param task_label:
@@ -208,21 +226,26 @@ class PNNLayer(MultiTaskModule):
         col_idx = self.task_to_module_idx[task_label]
         hs = []
         for ii in range(col_idx + 1):
-            hs.append(self.columns[ii](x[:ii+1]))
+            hs.append(self.columns[ii](x[: ii + 1]))
         return hs
 
 
-
 class PNN(MultiTaskModule):
-    """
-    Progressive Neural Network.
+    """Progressive Neural Network.
 
-    The model assumes that each experience is a separate task.
-    Multiple experiences with the same task label or multiple task labels
-    within the same experience will result in a runtime error.
+    The model assumes that each experience is a separate task. Multiple experiences with
+    the same task label or multiple task labels within the same experience will result
+    in a runtime error.
     """
-    def __init__(self, num_layers=1, in_features=784,
-                 hidden_features_per_column=100, adapter='mlp', base_predictor_args=None):
+
+    def __init__(
+        self,
+        num_layers=1,
+        in_features=784,
+        hidden_features_per_column=100,
+        adapter="mlp",
+        base_predictor_args=None,
+    ):
         """
         :param num_layers: number of layers (default=1)
         :param in_features: size of each input sample
@@ -242,30 +265,30 @@ class PNN(MultiTaskModule):
                 in_features,
                 hidden_features_per_column,
                 adapter=adapter,
-                base_predictor_args=base_predictor_args
+                base_predictor_args=base_predictor_args,
             )
         )
         for _ in range(num_layers - 1):
-            lay = PNNLayer(hidden_features_per_column,
-                           hidden_features_per_column,
-                           adapter=adapter,
-                           base_predictor_args=base_predictor_args)
+            lay = PNNLayer(
+                hidden_features_per_column,
+                hidden_features_per_column,
+                adapter=adapter,
+                base_predictor_args=base_predictor_args,
+            )
             self.layers.append(lay)
-        self.regressor = MultiHeadRegressor(in_features=hidden_features_per_column, out_features=1)
+        self.regressor = MultiHeadRegressor(
+            in_features=hidden_features_per_column, out_features=1
+        )
 
     def adaptation(self, experience):
-        print("adaptation")
         # NON chiamare super().adaptation (usa classes_in_this_experience)
         # Aggiorna i layer (aggiunge colonna per il nuovo task)
         for lay in self.layers:
             lay.train_adaptation(experience.dataset)
         # Crea la head del task nella regressor head
         self.regressor.adaptation(experience)
-        print("vamooooooooooooooo")
 
     def forward_single_task(self, x, task_label):
-    
-        print("forward single task")
         x = x.contiguous().view(x.size(0), self.in_features)
 
         num_columns = self.layers[0].num_columns
@@ -276,9 +299,6 @@ class PNN(MultiTaskModule):
             x = [F.relu(el) for el in lay.forward_single_task(x, task_label)]
         # ⬇️ usa la regressor head
         return self.regressor.forward_single_task(x[col_idx], task_label)
-
-
-
 
 
 class PNNSequenceModel(SequenceModel):
@@ -296,7 +316,9 @@ class PNNSequenceModel(SequenceModel):
         reduce_out: Optional[Literal["first", "mean"]] = None,
         washout: int = 0,
     ):
-        super().__init__(device, stateful=stateful, reduce_out=reduce_out, washout=washout)
+        super().__init__(
+            device, stateful=stateful, reduce_out=reduce_out, washout=washout
+        )
         self.input_size = input_size
         self.hidden_size = hidden_size
         self.output_size = output_size

@@ -12,13 +12,15 @@ from typing import (
 
 import numpy as np
 import pandas as pd
+import torch
+from torch import (
+    nn,
+    optim,
+)
 from torch.utils.data import (
     DataLoader,
     Subset,
 )
-import torch
-from torch import nn
-from torch import optim
 from tqdm import tqdm
 
 from spaceai.data import NASA
@@ -33,19 +35,30 @@ if TYPE_CHECKING:
 
 import logging
 
+from avalanche.benchmarks.scenarios.dataset_scenario import (
+    benchmark_from_datasets,
+)
+from avalanche.benchmarks.utils import (  # alias di AvalancheDataset
+    AvalancheDataset,
+    make_avalanche_dataset,
+)
+
 from .benchmark import Benchmark
-from avalanche.benchmarks.utils import AvalancheDataset
-from avalanche.benchmarks.scenarios.dataset_scenario import benchmark_from_datasets
-from avalanche.benchmarks.utils import make_avalanche_dataset  # alias di AvalancheDataset
+
+
 # opzionale: collate "salvagente" per dtype/shape
 def my_collate(batch):
-    import numpy as np, torch
-    print(batch.shape)
+    import numpy as np
+    import torch
+
     def to_tensor(v):
-        if isinstance(v, torch.Tensor): return v.float()
-        if isinstance(v, (np.ndarray, list, tuple)): return torch.as_tensor(v, dtype=torch.float32)
+        if isinstance(v, torch.Tensor):
+            return v.float()
+        if isinstance(v, (np.ndarray, list, tuple)):
+            return torch.as_tensor(v, dtype=torch.float32)
         return torch.tensor(float(v), dtype=torch.float32)
-    xs, ys, tls = zip(*batch)           # supponiamo (x, y, task_label)
+
+    xs, ys, tls = zip(*batch)  # supponiamo (x, y, task_label)
     xs = torch.stack([to_tensor(x) for x in xs], dim=0)
     ys = torch.stack([to_tensor(y) for y in ys], dim=0)
     tls = torch.as_tensor(tls, dtype=torch.long)
@@ -131,7 +144,6 @@ class NASABenchmark(Benchmark):
                 eval_size = int(len(train_channel) * perc_eval)
                 eval_channel = Subset(train_channel, indices[:eval_size])
                 train_channel = Subset(train_channel, indices[eval_size:])
-            print(train_channel)
             train_loader = DataLoader(
                 train_channel,
                 batch_size=batch_size,
@@ -241,7 +253,6 @@ class NASABenchmark(Benchmark):
         pd.DataFrame.from_records(self.all_results).to_csv(
             os.path.join(self.run_dir, "results.csv"), index=False
         )
-    
 
     def run_pnn(
         self,
@@ -289,7 +300,7 @@ class NASABenchmark(Benchmark):
         elif strategy is not None:
             logging.info(f"Fitting the predictor for channel {channel_id}...")
             # Training the predictor
-            
+
             eval_channel = None
             if perc_eval is not None:
                 # Split the training data into training and evaluation sets
@@ -301,31 +312,37 @@ class NASABenchmark(Benchmark):
 
             task_label = int(channel_id.split("-")[1])
             strategy.train_experience(train_channel, task_label)
-            
+
             task_labels = [task_label] * len(train_channel)
-           
-            train_ad = AvalancheDataset(train_channel, collate_fn=seq_collate_fn(n_inputs=2, mode="time"))
-  
+
+            train_ad = AvalancheDataset(
+                train_channel, collate_fn=seq_collate_fn(n_inputs=2, mode="time")
+            )
+
             if eval_channel is not None:
-                eval_ad  = AvalancheDataset(eval_channel)
+                eval_ad = AvalancheDataset(eval_channel)
             else:
                 eval_ad = None
 
-            train_ad = train_ad.update_data_attribute("targets_task_labels", task_labels)
+            train_ad = train_ad.update_data_attribute(
+                "targets_task_labels", task_labels
+            )
 
             if eval_channel is not None:
                 eval_task_labels = [task_label] * len(eval_channel)
-                eval_ad = eval_ad.update_data_attribute("targets_task_labels", eval_task_labels)
+                eval_ad = eval_ad.update_data_attribute(
+                    "targets_task_labels", eval_task_labels
+                )
             else:
                 eval_ad = None
 
             benchmark = benchmark_from_datasets(train=[train_ad], test=[])
             callback_handler.start()
-            exp = benchmark.train_stream[0]          # unica experience che contiene TUTTO train_ad
+            exp = benchmark.train_stream[
+                0
+            ]  # unica experience che contiene TUTTO train_ad
 
-            strategy.train_experience(exp) 
-            
-
+            strategy.train_experience(exp)
 
             callback_handler.stop()
             results.update(
