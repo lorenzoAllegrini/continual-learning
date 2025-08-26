@@ -16,7 +16,7 @@ from spaceai.benchmark.utils import CLTrainer
 from spaceai.data.utils import seq_collate_fn
 
 def main():
-    print("dfsahoiu------------------------------------------------------------------------")
+    
     benchmark = NASABenchmark(
         run_id="nasa_lstm",
         exp_dir="experiments",
@@ -31,13 +31,12 @@ def main():
     sample_channel = NASA("datasets", channels[0], mode="anomaly", train=False)
 
     predictor = PNN(
-        num_layers=1,
+        num_layers=2,
         in_features=sample_channel.in_features_size,
         hidden_features_per_column=80,
         adapter='mlp',
         base_predictor_args=dict(
-            input_size=sample_channel.in_features_size,
-            hidden_sizes=[80, 80],
+            hidden_sizes=[80],
             dropout=0.3,
             washout=249,
         ),
@@ -69,6 +68,7 @@ def main():
             overlapping_train=True,
             restore_predictor=False,
             callbacks=callbacks,
+            perc_eval=0.2
         )
 
     results_df = pd.read_csv(os.path.join(benchmark.run_dir, "results.csv"))

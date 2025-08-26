@@ -76,7 +76,7 @@ class MLPAdapter(nn.Module):
     def forward(self, x):
         if self.num_prev_modules == 0:
             return 0  # first adapter is empty
-
+        print(x[0].shape)
         assert len(x) == self.num_prev_modules
         assert len(x[0].shape) == 2, (
             "Inputs to MLPAdapter should have two dimensions: "
@@ -111,8 +111,10 @@ class PNNColumn(nn.Module):
         self.in_features = in_features
         self.out_features_per_column = out_features_per_column
         self.num_prev_modules = num_prev_modules
-
-        self.itoh = _LSTM_Encoder(**base_predictor_args)
+        
+        if self.in_features == base_predictor_args["hidden_sizes"][-1]:
+            base_predictor_args["washout"] = 0
+        self.itoh = _LSTM_Encoder(input_size=self.in_features, **base_predictor_args)
         if adapter == "linear":
             self.adapter = LinearAdapter(
                 in_features, out_features_per_column, num_prev_modules
@@ -130,6 +132,9 @@ class PNNColumn(nn.Module):
 
     def forward(self, x):
         prev_xs, last_x = x[:-1], x[-1]
+        print(np.array(prev_xs).shape)
+        #print(np.array(last_x).shape)
+        #print(last_x)
         hs = self.adapter(prev_xs)
         hs += self.itoh(last_x)
         return hs
@@ -166,7 +171,7 @@ class PNNLayer(MultiTaskModule):
         first_col = PNNColumn(
             in_features,
             out_features_per_column,
-            0,
+            num_prev_modules=0,
             adapter=adapter,
             base_predictor_args=base_predictor_args,
         )
@@ -228,8 +233,12 @@ class PNNLayer(MultiTaskModule):
         """
         col_idx = self.task_to_module_idx[task_label]
         hs = []
+        #print(self.columns)
         for ii in range(col_idx + 1):
+            #print(f"x: {np.array(x[: ii + 1]).shape}")
             hs.append(self.columns[ii](x[: ii + 1]))
+            #print(f"hs: {hs if len(hs) > 1 else len(hs)}")
+        
         return hs
 
 
@@ -303,56 +312,3 @@ class PNN(MultiTaskModule):
         # ⬇️ usa la regressor head
         return self.regressor.forward_single_task(x[col_idx], task_label)
 
-
-class PNNSequenceModel(SequenceModel):
-    """Wrapper che rende una PNN compatibile con SequenceModel."""
-
-    def __init__(
-        self,
-        input_size: int,
-        hidden_size: int,
-        output_size: int,
-        num_layers: int = 1,
-        adapter: str = "mlp",
-        device: Literal["cpu", "cuda"] = "cpu",
-        stateful: bool = False,
-        reduce_out: Optional[Literal["first", "mean"]] = None,
-        washout: int = 0,
-    ):
-        super().__init__(
-            device, stateful=stateful, reduce_out=reduce_out, washout=washout
-        )
-        self.input_size = input_size
-        self.hidden_size = hidden_size
-        self.output_size = output_size
-        self.num_layers = num_layers
-        self.adapter = adapter
-
-    def build_fn(self) -> nn.Module:
-        """Costruisce la PNN vera e propria."""
-        return PNN(
-            num_layers=self.num_layers,
-            in_features=self.input_size,
-            hidden_features_per_column=self.hidden_size,
-            adapter=self.adapter,
-        )
-
-    def __call__(self, input: torch.Tensor, task_label: int = 0):
-        """Forward che gestisce anche i task label."""
-        if self.model is None:
-            raise ValueError("Model must be built before calling predict.")
-
-        if isinstance(input, np.ndarray):
-            input = torch.from_numpy(input).float().to(self.device)
-
-        # qui la PNN richiede forward_single_task con task_label
-        out = self.model.forward_single_task(input, task_label)
-
-        if self.reduce_out is None:
-            return out
-        elif self.reduce_out == "mean":
-            return out.mean(dim=-1)
-        elif self.reduce_out == "first":
-            return out[..., 0]
-        else:
-            raise ValueError(f"Invalid reduce_out value: {self.reduce_out}")

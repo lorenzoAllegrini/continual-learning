@@ -144,7 +144,7 @@ class _LSTM(nn.Module):
         Returns:
             Union[torch.Tensor, Tuple[torch.Tensor, List[torch.Tensor]]]: Output data.
         """
-        print(x.shape)
+      
         h = x
         states = []
         for i, lstm in enumerate(self.lstm_layers):
