@@ -1,1 +1,1 @@
-print("Build completed.")
+"""Build script placeholder."""
