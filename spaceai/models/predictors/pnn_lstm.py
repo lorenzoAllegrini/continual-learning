@@ -76,7 +76,6 @@ class MLPAdapter(nn.Module):
     def forward(self, x):
         if self.num_prev_modules == 0:
             return 0  # first adapter is empty
-        print(x[0].shape)
         assert len(x) == self.num_prev_modules
         assert len(x[0].shape) == 2, (
             "Inputs to MLPAdapter should have two dimensions: "
@@ -105,7 +104,7 @@ class PNNColumn(nn.Module):
         :param out_features_per_column:
             size of each output sample (single column)
         :param num_prev_modules: number of previous columns
-        :param adapter: adapter type. One of {'linear', 'mlp'} (default='mlp')
+        :param adapter: adapter type. One of {'linear', 'mlp'} or None (default='mlp')
         """
         super().__init__()
         self.in_features = in_features
@@ -123,8 +122,10 @@ class PNNColumn(nn.Module):
             self.adapter = MLPAdapter(
                 out_features_per_column, out_features_per_column, num_prev_modules
             )
+        elif adapter is None:
+            self.adapter = None
         else:
-            raise ValueError("`adapter` must be one of: {'mlp', `linear'}.")
+            raise ValueError("`adapter` must be one of: {'mlp', 'linear'} or None.")
 
     def freeze(self):
         for param in self.parameters():
@@ -132,11 +133,11 @@ class PNNColumn(nn.Module):
 
     def forward(self, x):
         prev_xs, last_x = x[:-1], x[-1]
-        print(np.array(prev_xs).shape)
-        #print(np.array(last_x).shape)
-        #print(last_x)
-        hs = self.adapter(prev_xs)
-        hs += self.itoh(last_x)
+        if self.adapter is not None:
+            hs = self.adapter(prev_xs)
+            hs += self.itoh(last_x)
+        else:
+            hs = self.itoh(last_x)
         return hs
 
 
@@ -154,25 +155,28 @@ class PNNLayer(MultiTaskModule):
         out_features_per_column,
         adapter="mlp",
         base_predictor_args=None,
+        use_adapter=True,
     ):
         """
         :param in_features: size of each input sample
         :param out_features_per_column:
             size of each output sample (single column)
         :param adapter: adapter type. One of {'linear', 'mlp'} (default='mlp')
+        :param use_adapter: disable lateral adapters when False
         """
         super().__init__()
         self.in_features = in_features
         self.out_features_per_column = out_features_per_column
         self.adapter = adapter
         self.base_predictor_args = base_predictor_args
+        self.use_adapter = use_adapter
         # convert from task label to module list order
         self.task_to_module_idx = {}
         first_col = PNNColumn(
             in_features,
             out_features_per_column,
             num_prev_modules=0,
-            adapter=adapter,
+            adapter=adapter if use_adapter else None,
             base_predictor_args=base_predictor_args,
         )
         self.columns = nn.ModuleList([first_col])
@@ -219,7 +223,7 @@ class PNNLayer(MultiTaskModule):
                 self.in_features,
                 self.out_features_per_column,
                 self.num_columns,
-                adapter=self.adapter,
+                adapter=self.adapter if self.use_adapter else None,
                 base_predictor_args=self.base_predictor_args,
             )
         )
@@ -278,6 +282,7 @@ class PNN(MultiTaskModule):
                 hidden_features_per_column,
                 adapter=adapter,
                 base_predictor_args=base_predictor_args,
+                use_adapter=False,
             )
         )
         for _ in range(num_layers - 1):
@@ -311,4 +316,8 @@ class PNN(MultiTaskModule):
             x = [F.relu(el) for el in lay.forward_single_task(x, task_label)]
         # ⬇️ usa la regressor head
         return self.regressor.forward_single_task(x[col_idx], task_label)
+
+
+# Backward compatibility
+LSTMPNN = PNN
 
