@@ -134,17 +134,15 @@ class PNNColumn(nn.Module):
     def forward(self, x):
         prev_xs, last_x = x[:-1], x[-1]
         if self.adapter is not None:
-            
-            if len(prev_xs) > 0:
-                prev_xs = prev_xs[0].squeeze(0) # da (1,1,64,80) → (64,80)
-            print(np.array(prev_xs).shape)
-            #print(prev_xs)
-            hs = self.adapter([prev_xs])
+            prev_xs = [px.squeeze(0) for px in prev_xs]
+            assert (
+                len(prev_xs) == self.num_prev_modules
+            ), f"Expected {self.num_prev_modules} prev modules, got {len(prev_xs)}"
+            hs = self.adapter(prev_xs)
             hs += self.itoh(last_x)[-1]
         else:
             hs = self.itoh(last_x)[-1]
-        
-        #print(hs)    
+
         return hs
 
 
