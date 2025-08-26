@@ -165,7 +165,6 @@ class NASA(AnomalyDataset):
             )
 
         self.data, self.anomalies = self.load_and_preprocess()
-        print(f"self.data: {self.data.shape}")
 
     def __getitem__(self, index: int) -> Union[
         Tuple[torch.Tensor, torch.Tensor],

@@ -22,7 +22,7 @@ def snapshot_params(model):
 def grad_report(model, prefix=""):
     lines = []
     for n, p in model.named_parameters():
-        if not p.requires_grad: 
+        if not p.requires_grad:
             lines.append(f"[FROZEN] {prefix}{n}")
             continue
         g = p.grad
@@ -30,14 +30,14 @@ def grad_report(model, prefix=""):
             lines.append(f"[NO-GRAD] {prefix}{n}")
         else:
             lines.append(f"[GRAD]    {prefix}{n}: ||g||={g.data.norm().item():.4e}")
-    print("\n".join(lines))
+    return "\n".join(lines)
 
 def delta_report(model, before, prefix=""):
     # mostra quanto è cambiato ogni parametro dopo optimizer.step()
     lines = []
     with torch.no_grad():
         for n, p in model.named_parameters():
-            if n not in before: 
+            if n not in before:
                 lines.append(f"[NEW]  {prefix}{n} (aggiunto dopo lo snapshot)")
                 continue
             if not p.requires_grad:
@@ -45,7 +45,7 @@ def delta_report(model, before, prefix=""):
                 continue
             delta = (p - before[n]).norm().item()
             lines.append(f"[Δ]     {prefix}{n}: ||Δ||={delta:.4e}")
-    print("\n".join(lines))
+    return "\n".join(lines)
 
 
 
@@ -170,21 +170,14 @@ class SequenceModel:
                     f"{name}_train": 0.0 for name in metrics_
                 }
                 for inputs, targets in train_loader:
-                    before = snapshot_params(self.model)
-                    #grad_report(self.model, prefix="")
-                    #print(inputs)
                     inputs, targets = inputs.to(self.device), targets.to(self.device)
                     optimizer.zero_grad()
                     outputs = self.model(inputs)
-                    
+
                     outputs, targets = self._apply_washout(outputs, targets)
-                    print(f"output.shape: {outputs}")
-                    print(f"targets.shape: {targets}")
                     loss = criterion(outputs, targets)
-                    #grad_report(self.model, prefix="")
                     loss.backward()
                     optimizer.step()
-                    #delta_report(self.model, before) 
                     with torch.no_grad():
                         for name, metric in metrics_.items():
                             if name == "loss":
@@ -221,7 +214,6 @@ class SequenceModel:
                 pbar.update(1)
                 if patience_before_stopping is not None:
                     if epochs_since_improvement >= patience_before_stopping:
-                        print("Early stopping at epoch %s", epoch)
                         break
         if restore_best:
             self.model.load_state_dict(best_model)

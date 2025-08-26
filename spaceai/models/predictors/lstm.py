@@ -57,7 +57,6 @@ class LSTM(SequenceModel):
 
     def __call__(self, input):
         pred = super().__call__(input)
-        print(pred)
         if self.reduce_out is None:
             return pred
         elif self.reduce_out == "mean":

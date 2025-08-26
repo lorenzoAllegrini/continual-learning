@@ -14,7 +14,7 @@ def snapshot_params(model):
 def grad_report(model, prefix=""):
     lines = []
     for n, p in model.named_parameters():
-        if not p.requires_grad: 
+        if not p.requires_grad:
             lines.append(f"[FROZEN] {prefix}{n}")
             continue
         g = p.grad
@@ -22,14 +22,14 @@ def grad_report(model, prefix=""):
             lines.append(f"[NO-GRAD] {prefix}{n}")
         else:
             lines.append(f"[GRAD]    {prefix}{n}: ||g||={g.data.norm().item():.4e}")
-    print("\n".join(lines))
+    return "\n".join(lines)
 
 def delta_report(model, before, prefix=""):
     # mostra quanto è cambiato ogni parametro dopo optimizer.step()
     lines = []
     with torch.no_grad():
         for n, p in model.named_parameters():
-            if n not in before: 
+            if n not in before:
                 lines.append(f"[NEW]  {prefix}{n} (aggiunto dopo lo snapshot)")
                 continue
             if not p.requires_grad:
@@ -37,7 +37,7 @@ def delta_report(model, before, prefix=""):
                 continue
             delta = (p - before[n]).norm().item()
             lines.append(f"[Δ]     {prefix}{n}: ||Δ||={delta:.4e}")
-    print("\n".join(lines))
+    return "\n".join(lines)
 
 
 
@@ -111,7 +111,6 @@ class CLTrainer:
         avalanche_model_adaptation(self.model, benchmark.train_stream[0])
       
         # 2) Dataloader
-        #print(f"data.shape: {data.data.shape}")
         dl = DataLoader(
             data,
             batch_size=64,
@@ -122,29 +121,30 @@ class CLTrainer:
         optimizer = self.optimizer_factory(self.model)
         # 3) Loop
         self.model.train()
-        
+
         with tqdm(total=self.train_epochs) as pbar:
             for epoch in range(self.train_epochs):
-                self.model.train()  # Set the model to training mode
-                print(f"epoch: {epoch}")
+                epoch_loss = 0.0
+                n_samples = 0
                 for inputs, targets in dl:
-                    before = snapshot_params(self.model)
-                    #print(inputs)
                     inputs, targets = inputs.to(self.device), targets.to(self.device)
                     optimizer.zero_grad()
                     outputs = self.model(inputs, task)
-                    
+
                     outputs, targets = self._apply_washout(outputs, targets)
-                    print(f"outputs: {outputs}, targets: {targets}")
                     loss = self.criterion(outputs, targets)
-                    
-                    
+
                     loss.backward()
                     optimizer.step()
-                    #grad_report(self.model, prefix="")
-                    
-                    #delta_report(self.model, before) 
-                    #print("----------------------------------------------------------------------------------------")
+
+                    epoch_loss += loss.item() * inputs.size(0)
+                    n_samples += inputs.size(0)
+
+                avg_loss = epoch_loss / max(n_samples, 1)
+                pbar.set_description(
+                    f"Epoch [{epoch + 1}/{self.train_epochs}] Loss: {avg_loss:.4f}"
+                )
+                pbar.update(1)
                 
     # comodo helper per uno stream di experience (opzionale)
     def train_stream(self, train_stream):
