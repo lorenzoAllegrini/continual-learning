@@ -170,19 +170,18 @@ class SequenceModel:
                     f"{name}_train": 0.0 for name in metrics_
                 }
                 for inputs, targets in train_loader:
-                    grad_report(self.model, prefix="")
+                    before = snapshot_params(self.model)
+                    #grad_report(self.model, prefix="")
                     #print(inputs)
                     inputs, targets = inputs.to(self.device), targets.to(self.device)
                     optimizer.zero_grad()
                     outputs = self.model(inputs)
-                    print(outputs.shape)
                     outputs, targets = self._apply_washout(outputs, targets)
-                    print(outputs.shape)
                     loss = criterion(outputs, targets)
                     #grad_report(self.model, prefix="")
                     loss.backward()
                     optimizer.step()
-
+                    #delta_report(self.model, before) 
                     with torch.no_grad():
                         for name, metric in metrics_.items():
                             if name == "loss":

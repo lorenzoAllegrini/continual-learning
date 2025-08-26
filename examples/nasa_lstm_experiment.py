@@ -17,7 +17,7 @@ def main():
         run_id="nasa_lstm",
         exp_dir="experiments",
         seq_length=250,
-        n_predictions=10,
+        n_predictions=1,
         data_root="datasets",
     )
     callbacks = [SystemMonitorCallback()]

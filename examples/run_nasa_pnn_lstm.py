@@ -53,11 +53,11 @@ def main():
         )
 
         criterion = nn.MSELoss()
-        optimizer = optim.Adam(predictor.parameters(), lr=0.001)
+        optimizer_factory = lambda predictor: optim.Adam(predictor.parameters(), lr=0.001)
         epochs = 35
 
         # definizione della strategia naive
-        trainer = CLTrainer(model=predictor, optimizer=optimizer,
+        trainer = CLTrainer(model=predictor, optimizer_factory=optimizer_factory,
                           criterion=criterion, device="cuda" if torch.cuda.is_available() else "cpu",
                           collate_fn=seq_collate_fn(n_inputs=2, mode="time"))
 

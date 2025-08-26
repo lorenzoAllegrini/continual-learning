@@ -45,12 +45,12 @@ class CLTrainer:
     def __init__(
         self,
         model,
-        optimizer,
+        optimizer_factory,
         criterion,
         *,
         device="cpu",
-        train_epochs=2,
-        train_mb_size=64,
+        train_epochs=20,
+        train_mb_size=1024,
         eval_mb_size=64,
         collate_fn=None,
         num_workers=0,
@@ -59,7 +59,7 @@ class CLTrainer:
         washout=249,
     ):
         self.model = model
-        self.optimizer = optimizer
+        self.optimizer_factory = optimizer_factory
         self.criterion = criterion
         self.device = torch.device(device)
 
@@ -115,32 +115,36 @@ class CLTrainer:
         dl = DataLoader(
             data,
             batch_size=64,
-            shuffle=False,
+            shuffle=True,
             collate_fn=seq_collate_fn(n_inputs=2, mode="batch"),
         )
 
+        optimizer = self.optimizer_factory(self.model)
         # 3) Loop
         self.model.train()
         
         with tqdm(total=self.train_epochs) as pbar:
             for epoch in range(self.train_epochs):
                 self.model.train()  # Set the model to training mode
-                
+                print(f"epoch: {epoch}")
                 for inputs, targets in dl:
+                    before = snapshot_params(self.model)
                     #print(inputs)
                     inputs, targets = inputs.to(self.device), targets.to(self.device)
-                    self.optimizer.zero_grad()
+                    optimizer.zero_grad()
                     outputs = self.model(inputs, task)
                     
-                    outputs, targets = self._apply_washout(outputs, targets)
-                  
+                    #outputs, targets = self._apply_washout(outputs, targets)
+                    #print(f"outputs: {outputs}, targets: {targets}")
                     loss = self.criterion(outputs, targets)
                     print(loss)
                     
                     loss.backward()
-                    self.optimizer.step()
-                    grad_report(self.model, prefix="")
-                    print("----------------------------------------------------------------------------------------")
+                    optimizer.step()
+                    #grad_report(self.model, prefix="")
+                    
+                    #delta_report(self.model, before) 
+                    #print("----------------------------------------------------------------------------------------")
                 
     # comodo helper per uno stream di experience (opzionale)
     def train_stream(self, train_stream):
