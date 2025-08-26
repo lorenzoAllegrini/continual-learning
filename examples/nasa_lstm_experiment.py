@@ -48,7 +48,7 @@ def main():
             fit_predictor_args=dict(
                 criterion=nn.MSELoss(),
                 optimizer=optim.Adam(predictor.model.parameters(), lr=0.001),
-                epochs=35,
+                epochs=5,
                 patience_before_stopping=10,
                 min_delta=0.0003,
                 batch_size=64,

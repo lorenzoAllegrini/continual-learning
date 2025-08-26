@@ -49,7 +49,7 @@ class CLTrainer:
         criterion,
         *,
         device="cpu",
-        train_epochs=20,
+        train_epochs=2,
         train_mb_size=1024,
         eval_mb_size=64,
         collate_fn=None,
@@ -134,10 +134,10 @@ class CLTrainer:
                     optimizer.zero_grad()
                     outputs = self.model(inputs, task)
                     
-                    #outputs, targets = self._apply_washout(outputs, targets)
-                    #print(f"outputs: {outputs}, targets: {targets}")
+                    outputs, targets = self._apply_washout(outputs, targets)
+                    print(f"outputs: {outputs}, targets: {targets}")
                     loss = self.criterion(outputs, targets)
-                    print(loss)
+                    
                     
                     loss.backward()
                     optimizer.step()

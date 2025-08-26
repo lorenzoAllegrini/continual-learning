@@ -46,5 +46,4 @@ class MultiHeadRegressor(DynamicModule):
 
     def forward_single_task(self, x: torch.Tensor, task_label: int) -> torch.Tensor:
         
-        
         return self.heads[str(int(task_label))](x)

@@ -176,7 +176,10 @@ class SequenceModel:
                     inputs, targets = inputs.to(self.device), targets.to(self.device)
                     optimizer.zero_grad()
                     outputs = self.model(inputs)
+                    
                     outputs, targets = self._apply_washout(outputs, targets)
+                    print(f"output.shape: {outputs}")
+                    print(f"targets.shape: {targets}")
                     loss = criterion(outputs, targets)
                     #grad_report(self.model, prefix="")
                     loss.backward()

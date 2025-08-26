@@ -57,6 +57,7 @@ class LSTM(SequenceModel):
 
     def __call__(self, input):
         pred = super().__call__(input)
+        print(pred)
         if self.reduce_out is None:
             return pred
         elif self.reduce_out == "mean":
@@ -163,9 +164,8 @@ class _LSTM(nn.Module):
                 states.append(state)
             #print(f"layer:{i} h.shape:{h.shape}")
             
-        print(h.shape)
         out = self.fc(h)
-        print(out.shape)
+    
         if return_states:
             return out, states
         return out
