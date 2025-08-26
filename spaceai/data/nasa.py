@@ -165,6 +165,7 @@ class NASA(AnomalyDataset):
             )
 
         self.data, self.anomalies = self.load_and_preprocess()
+        print(f"self.data: {self.data.shape}")
 
     def __getitem__(self, index: int) -> Union[
         Tuple[torch.Tensor, torch.Tensor],
@@ -240,7 +241,8 @@ class NASA(AnomalyDataset):
         data = np.load(
             os.path.join(self.split_folder, f"{self.channel_id}.npy")
         ).astype(np.float32)
-        
+        #data = data[:,0]
+        #data = data[:, np.newaxis] 
         if self._mode == "prediction":
             return data, None
 
@@ -255,7 +257,7 @@ class NASA(AnomalyDataset):
                 anomalies = ast.literal_eval(anomaly_seq_df.values[0])
             else:
                 logging.warning(f"No anomalies found for channel {self.channel_id}")
-        print(data.shape)
+   
         return data, anomalies
 
     @property

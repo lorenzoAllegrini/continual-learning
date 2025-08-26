@@ -34,7 +34,7 @@ def main():
         predictor = LSTM(
             nasa_channel.in_features_size,
             [80, 80],
-            10,
+            1,
             reduce_out="first",
             dropout=0.3,
             washout=249,

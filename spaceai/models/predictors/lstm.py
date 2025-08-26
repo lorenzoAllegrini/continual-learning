@@ -10,7 +10,7 @@ import torch
 from torch import nn
 
 from .seq_model import SequenceModel
-
+import numpy as np
 
 class LSTM(SequenceModel):
 
@@ -148,6 +148,7 @@ class _LSTM(nn.Module):
         h = x
         states = []
         for i, lstm in enumerate(self.lstm_layers):
+            #print(f"layer:{i} initial h:{h.shape}")
             washout_layer = 0
             if self.training and i == len(self.lstm_layers) - 1:
                 washout_layer = self.washout
@@ -160,7 +161,11 @@ class _LSTM(nn.Module):
             if return_states:
                 h, state = h
                 states.append(state)
+            #print(f"layer:{i} h.shape:{h.shape}")
+            
+        print(h.shape)
         out = self.fc(h)
+        print(out.shape)
         if return_states:
             return out, states
         return out
@@ -211,6 +216,7 @@ class _LSTMDropoutLayer(nn.Module):
         h = self.dropout(h)
         if return_states:
             return h, state
+        
         return h
 
 

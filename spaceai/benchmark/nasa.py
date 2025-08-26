@@ -105,8 +105,7 @@ class NASABenchmark(Benchmark):
             callbacks (Optional[List[Callback]]): a list of callbacks to be used during benchmark
             call_every_ms (int): the interval at which the callbacks are called
         """
-        if strategy is None:
-            raise ValueError("strategy must be provided")
+    
         callback_handler = CallbackHandler(
             callbacks=callbacks if callbacks is not None else [],
             call_every_ms=call_every_ms,

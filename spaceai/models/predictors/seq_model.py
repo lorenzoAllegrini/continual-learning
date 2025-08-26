@@ -15,6 +15,42 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 
+def snapshot_params(model):
+    # copia leggera dei tensori dei pesi per calcolare le differenze dopo lo step
+    return {n: p.detach().clone() for n, p in model.named_parameters() if p.requires_grad}
+
+def grad_report(model, prefix=""):
+    lines = []
+    for n, p in model.named_parameters():
+        if not p.requires_grad: 
+            lines.append(f"[FROZEN] {prefix}{n}")
+            continue
+        g = p.grad
+        if g is None:
+            lines.append(f"[NO-GRAD] {prefix}{n}")
+        else:
+            lines.append(f"[GRAD]    {prefix}{n}: ||g||={g.data.norm().item():.4e}")
+    print("\n".join(lines))
+
+def delta_report(model, before, prefix=""):
+    # mostra quanto è cambiato ogni parametro dopo optimizer.step()
+    lines = []
+    with torch.no_grad():
+        for n, p in model.named_parameters():
+            if n not in before: 
+                lines.append(f"[NEW]  {prefix}{n} (aggiunto dopo lo snapshot)")
+                continue
+            if not p.requires_grad:
+                lines.append(f"[FROZEN]{prefix}{n}")
+                continue
+            delta = (p - before[n]).norm().item()
+            lines.append(f"[Δ]     {prefix}{n}: ||Δ||={delta:.4e}")
+    print("\n".join(lines))
+
+
+
+
+
 class SequenceModel:
     """Base class for generic sequence models.
 
@@ -134,11 +170,16 @@ class SequenceModel:
                     f"{name}_train": 0.0 for name in metrics_
                 }
                 for inputs, targets in train_loader:
+                    grad_report(self.model, prefix="")
+                    #print(inputs)
                     inputs, targets = inputs.to(self.device), targets.to(self.device)
                     optimizer.zero_grad()
                     outputs = self.model(inputs)
+                    print(outputs.shape)
                     outputs, targets = self._apply_washout(outputs, targets)
+                    print(outputs.shape)
                     loss = criterion(outputs, targets)
+                    #grad_report(self.model, prefix="")
                     loss.backward()
                     optimizer.step()
 

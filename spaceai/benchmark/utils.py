@@ -5,6 +5,42 @@ from avalanche.models.dynamic_modules import avalanche_model_adaptation
 from spaceai.data.utils import seq_collate_fn
 from avalanche.benchmarks.utils import AvalancheDataset
 from avalanche.benchmarks.scenarios.dataset_scenario import benchmark_from_datasets
+from tqdm import tqdm
+
+def snapshot_params(model):
+    # copia leggera dei tensori dei pesi per calcolare le differenze dopo lo step
+    return {n: p.detach().clone() for n, p in model.named_parameters() if p.requires_grad}
+
+def grad_report(model, prefix=""):
+    lines = []
+    for n, p in model.named_parameters():
+        if not p.requires_grad: 
+            lines.append(f"[FROZEN] {prefix}{n}")
+            continue
+        g = p.grad
+        if g is None:
+            lines.append(f"[NO-GRAD] {prefix}{n}")
+        else:
+            lines.append(f"[GRAD]    {prefix}{n}: ||g||={g.data.norm().item():.4e}")
+    print("\n".join(lines))
+
+def delta_report(model, before, prefix=""):
+    # mostra quanto è cambiato ogni parametro dopo optimizer.step()
+    lines = []
+    with torch.no_grad():
+        for n, p in model.named_parameters():
+            if n not in before: 
+                lines.append(f"[NEW]  {prefix}{n} (aggiunto dopo lo snapshot)")
+                continue
+            if not p.requires_grad:
+                lines.append(f"[FROZEN]{prefix}{n}")
+                continue
+            delta = (p - before[n]).norm().item()
+            lines.append(f"[Δ]     {prefix}{n}: ||Δ||={delta:.4e}")
+    print("\n".join(lines))
+
+
+
 class CLTrainer:
     def __init__(
         self,
@@ -19,7 +55,8 @@ class CLTrainer:
         collate_fn=None,
         num_workers=0,
         grad_clip=None,
-        use_amp=False
+        use_amp=False,
+        washout=249,
     ):
         self.model = model
         self.optimizer = optimizer
@@ -37,6 +74,7 @@ class CLTrainer:
         self.grad_clip = grad_clip
         # abilita AMP solo se su cuda
         self.use_amp = bool(use_amp and self.device.type == "cuda")
+        self.washout = washout
 
     @torch.no_grad()
     def evaluate_experience(self, data, task):
@@ -58,6 +96,12 @@ class CLTrainer:
             n += bs
         return total / max(n, 1)
 
+    def _apply_washout(self, inputs: torch.Tensor, targets: torch.Tensor):
+        if self.washout is not None:
+            targets = targets[self.washout :]
+            inputs = inputs[-len(targets) :]
+        return inputs, targets
+    
     def train_experience(self, data, task):
 
         # 1) Adattamento (come Naive)
@@ -67,40 +111,37 @@ class CLTrainer:
         avalanche_model_adaptation(self.model, benchmark.train_stream[0])
       
         # 2) Dataloader
-        
+        #print(f"data.shape: {data.data.shape}")
         dl = DataLoader(
             data,
             batch_size=64,
-            shuffle=True,
+            shuffle=False,
             collate_fn=seq_collate_fn(n_inputs=2, mode="batch"),
         )
 
         # 3) Loop
         self.model.train()
-        scaler = torch.cuda.amp.GradScaler(enabled=self.use_amp)
-        autocast_ctx = torch.cuda.amp.autocast if self.use_amp else nullcontext
-
-        for epoch in range(self.train_epochs):  
-            print(epoch)
-            for x, y in dl:
-                x = x.to(self.device); y = y.to(self.device)
-                self.optimizer.zero_grad(set_to_none=True)
-                with autocast_ctx():
-                    out = self.model(x, task)
-                    loss = self.criterion(out.squeeze(-1), y.squeeze(-1))
-                print(f"loss: {loss}")
-                if self.use_amp:
-                    scaler.scale(loss).backward()
-                    if self.grad_clip is not None:
-                        scaler.unscale_(self.optimizer)
-                        torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_clip)
-                    scaler.step(self.optimizer); scaler.update()
-                else:
+        
+        with tqdm(total=self.train_epochs) as pbar:
+            for epoch in range(self.train_epochs):
+                self.model.train()  # Set the model to training mode
+                
+                for inputs, targets in dl:
+                    #print(inputs)
+                    inputs, targets = inputs.to(self.device), targets.to(self.device)
+                    self.optimizer.zero_grad()
+                    outputs = self.model(inputs, task)
+                    
+                    outputs, targets = self._apply_washout(outputs, targets)
+                  
+                    loss = self.criterion(outputs, targets)
+                    print(loss)
+                    
                     loss.backward()
-                    if self.grad_clip is not None:
-                        torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_clip)
                     self.optimizer.step()
-
+                    grad_report(self.model, prefix="")
+                    print("----------------------------------------------------------------------------------------")
+                
     # comodo helper per uno stream di experience (opzionale)
     def train_stream(self, train_stream):
         for exp in train_stream:

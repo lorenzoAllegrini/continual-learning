@@ -111,8 +111,10 @@ class PNNColumn(nn.Module):
         self.out_features_per_column = out_features_per_column
         self.num_prev_modules = num_prev_modules
         
-        if self.in_features == base_predictor_args["hidden_sizes"][-1]:
+        if self.in_features != base_predictor_args["hidden_sizes"][-1]:
             base_predictor_args["washout"] = 0
+        else:
+            base_predictor_args["washout"] = 249  
         self.itoh = _LSTM_Encoder(input_size=self.in_features, **base_predictor_args)
         if adapter == "linear":
             self.adapter = LinearAdapter(
@@ -133,15 +135,16 @@ class PNNColumn(nn.Module):
 
     def forward(self, x):
         prev_xs, last_x = x[:-1], x[-1]
-        if self.adapter is not None:
+        if self.adapter is not None and False:
             prev_xs = [px.squeeze(0) for px in prev_xs]
             assert (
                 len(prev_xs) == self.num_prev_modules
             ), f"Expected {self.num_prev_modules} prev modules, got {len(prev_xs)}"
             hs = self.adapter(prev_xs)
-            hs += self.itoh(last_x)[-1]
+            hs += self.itoh(last_x)
         else:
-            hs = self.itoh(last_x)[-1]
+            hs = self.itoh(last_x)
+            #print(hs.shape)
 
         return hs
 

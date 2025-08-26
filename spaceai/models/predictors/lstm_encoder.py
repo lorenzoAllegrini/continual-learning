@@ -148,7 +148,7 @@ class _LSTM_Encoder(nn.Module):
    
         states = []
         for i, lstm in enumerate(self.lstm_layers):
-      
+            #print(f"layer:{i}, initial h: {h.shape}")
             washout_layer = 0
             if self.training and i == len(self.lstm_layers) - 1:
                 washout_layer = self.washout
@@ -162,6 +162,8 @@ class _LSTM_Encoder(nn.Module):
             if return_states:
                 h, state = h
                 states.append(state)
+            #print(f"layer:{i}, h.shape: {h.shape}")
+        #print(h)
         return h
 
 
@@ -204,7 +206,7 @@ class _LSTMDropoutLayer(nn.Module):
         Returns:
             Union[torch.Tensor, Tuple[torch.Tensor, List[torch.Tensor]]]: Output data.
         """
-       
+    
         h, state = self.lstm(x, initial_state)
         
         if washout_layer is not None:
