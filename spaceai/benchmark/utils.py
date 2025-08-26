@@ -13,7 +13,7 @@ class CLTrainer:
         criterion,
         *,
         device="cpu",
-        train_epochs=1,
+        train_epochs=2,
         train_mb_size=64,
         eval_mb_size=64,
         collate_fn=None,
@@ -80,14 +80,15 @@ class CLTrainer:
         scaler = torch.cuda.amp.GradScaler(enabled=self.use_amp)
         autocast_ctx = torch.cuda.amp.autocast if self.use_amp else nullcontext
 
-        for _ in range(self.train_epochs):  
+        for epoch in range(self.train_epochs):  
+            print(epoch)
             for x, y in dl:
                 x = x.to(self.device); y = y.to(self.device)
                 self.optimizer.zero_grad(set_to_none=True)
                 with autocast_ctx():
                     out = self.model(x, task)
                     loss = self.criterion(out.squeeze(-1), y.squeeze(-1))
-
+                print(f"loss: {loss}")
                 if self.use_amp:
                     scaler.scale(loss).backward()
                     if self.grad_clip is not None:

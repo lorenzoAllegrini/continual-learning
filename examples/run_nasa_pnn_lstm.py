@@ -40,6 +40,7 @@ def main():
             dropout=0.3,
             washout=249,
         ),
+        
     )
     
     for i, channel_id in enumerate(channels):
@@ -68,7 +69,7 @@ def main():
             overlapping_train=True,
             restore_predictor=False,
             callbacks=callbacks,
-            perc_eval=0.2
+            perc_eval=None
         )
 
     results_df = pd.read_csv(os.path.join(benchmark.run_dir, "results.csv"))

@@ -240,6 +240,7 @@ class NASA(AnomalyDataset):
         data = np.load(
             os.path.join(self.split_folder, f"{self.channel_id}.npy")
         ).astype(np.float32)
+        
         if self._mode == "prediction":
             return data, None
 
@@ -254,7 +255,7 @@ class NASA(AnomalyDataset):
                 anomalies = ast.literal_eval(anomaly_seq_df.values[0])
             else:
                 logging.warning(f"No anomalies found for channel {self.channel_id}")
-
+        print(data.shape)
         return data, anomalies
 
     @property
