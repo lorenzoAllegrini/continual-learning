@@ -87,11 +87,13 @@ class CLTrainer:
             collate_fn=seq_collate_fn(n_inputs=2, mode="batch"),
         )
         total, n = 0.0, 0
-        for x, y in dl:
-            x = x.to(self.device); y = y.to(self.device)
-            out = self.model(x, task)
-            loss = self.criterion(out.squeeze(-1), y.squeeze(-1))
-            bs = x.size(0)
+        for inputs, targets in dl:
+            inputs = inputs.to(self.device)
+            targets = targets.to(self.device)
+            outputs = self.model(inputs, task)
+            outputs, targets = self._apply_washout(outputs, targets)
+            loss = self.criterion(outputs, targets)
+            bs = inputs.size(0)
             total += loss.item() * bs
             n += bs
         return total / max(n, 1)
