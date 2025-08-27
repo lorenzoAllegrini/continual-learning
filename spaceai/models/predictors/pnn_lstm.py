@@ -72,6 +72,11 @@ class MLPAdapter(nn.Module):
         self.V = nn.Linear(in_features * num_prev_modules, out_features_per_column)
         self.alphas = nn.Parameter(torch.randn(num_prev_modules))
         self.U = nn.Linear(out_features_per_column, out_features_per_column)
+        
+        
+        self.V.requires_grad = True
+        self.alphas.requires_grad = True
+        self.U.requires_grad = True
 
     def forward(self, x):
         if self.num_prev_modules == 0:
@@ -90,7 +95,7 @@ class MLPAdapter(nn.Module):
             else:
                 el = el.to(dtype=self.alphas.dtype, device=self.alphas.device)
             scaled.append(self.alphas[i] * el)
-        x = torch.cat(scaled, dim=1)
+        x = torch.cat(scaled, dim=1)        
         x = self.U(self.activation(self.V(x)))
         return x
 
@@ -144,21 +149,23 @@ class PNNColumn(nn.Module):
         prev_xs, last_x = x[:-1], x[-1]
         base = self.itoh(last_x)
 
-        if self.adapter is not None:
+        if self.adapter is not None and len(prev_xs) > 0:
             # Adapter expects 2-D tensors (batch, features). Remove any singleton
             # sequence dimension from lateral inputs when present.
-            prev_xs = [
+            prev_xs = np.array([
                 px.squeeze(0) if px.dim() == 3 and px.size(0) == 1 else px
                 for px in prev_xs
-            ]
+            ])
+            prev_xs = prev_xs[:,0]
             assert (
                 len(prev_xs) == self.num_prev_modules
             ), f"Expected {self.num_prev_modules} prev modules, got {len(prev_xs)}"
+      
             hs = self.adapter(prev_xs)
+            
             # Ensure shapes match before summation. The encoder returns
             # (seq_len, batch, features); squeeze if the time dimension is singleton.
-            if base.dim() == hs.dim() + 1 and base.size(0) == 1:
-                base = base.squeeze(0)
+            
             hs = hs + base
         else:
             hs = base
@@ -263,8 +270,10 @@ class PNNLayer(MultiTaskModule):
         col_idx = self.task_to_module_idx[task_label]
         hs = []
         #print(self.columns)
+        
         for ii in range(col_idx + 1):
             #print(f"x: {np.array(x[: ii + 1]).shape}")
+            
             hs.append(self.columns[ii](x[: ii + 1]))
             #print(f"hs: {hs if len(hs) > 1 else len(hs)}")
         

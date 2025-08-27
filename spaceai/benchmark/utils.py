@@ -49,7 +49,7 @@ class CLTrainer:
         criterion,
         *,
         device="cpu",
-        train_epochs=2,
+        train_epochs=20,
         train_mb_size=1024,
         eval_mb_size=64,
         collate_fn=None,
@@ -123,20 +123,23 @@ class CLTrainer:
         self.model.train()
 
         with tqdm(total=self.train_epochs) as pbar:
+            
             for epoch in range(self.train_epochs):
                 epoch_loss = 0.0
                 n_samples = 0
                 for inputs, targets in dl:
+                    before = snapshot_params(self.model)
                     inputs, targets = inputs.to(self.device), targets.to(self.device)
                     optimizer.zero_grad()
                     outputs = self.model(inputs, task)
-
+                    #print(outputs.shape)
                     outputs, targets = self._apply_washout(outputs, targets)
                     loss = self.criterion(outputs, targets)
 
                     loss.backward()
                     optimizer.step()
-
+                    #print(grad_report(self.model))
+                    #print(delta_report(self.model, before))
                     epoch_loss += loss.item() * inputs.size(0)
                     n_samples += inputs.size(0)
 

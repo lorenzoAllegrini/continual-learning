@@ -316,7 +316,6 @@ class NASABenchmark(Benchmark):
                 results["eval_loss"] = strategy.evaluate_experience(
                     eval_channel, task_label
                 )
-        return
 
         callback_handler.start()
         test_loader = DataLoader(
