@@ -81,9 +81,16 @@ class MLPAdapter(nn.Module):
             "Inputs to MLPAdapter should have two dimensions: "
             "<batch_size, num_features>."
         )
+        scaled: List[torch.Tensor] = []
         for i, el in enumerate(x):
-            x[i] = self.alphas[i] * el
-        x = torch.cat(x, dim=1)
+            if not isinstance(el, torch.Tensor):
+                el = torch.as_tensor(
+                    el, dtype=self.alphas.dtype, device=self.alphas.device
+                )
+            else:
+                el = el.to(dtype=self.alphas.dtype, device=self.alphas.device)
+            scaled.append(self.alphas[i] * el)
+        x = torch.cat(scaled, dim=1)
         x = self.U(self.activation(self.V(x)))
         return x
 
@@ -135,16 +142,26 @@ class PNNColumn(nn.Module):
 
     def forward(self, x):
         prev_xs, last_x = x[:-1], x[-1]
-        if self.adapter is not None and False:
-            prev_xs = [px.squeeze(0) for px in prev_xs]
+        base = self.itoh(last_x)
+
+        if self.adapter is not None:
+            # Adapter expects 2-D tensors (batch, features). Remove any singleton
+            # sequence dimension from lateral inputs when present.
+            prev_xs = [
+                px.squeeze(0) if px.dim() == 3 and px.size(0) == 1 else px
+                for px in prev_xs
+            ]
             assert (
                 len(prev_xs) == self.num_prev_modules
             ), f"Expected {self.num_prev_modules} prev modules, got {len(prev_xs)}"
             hs = self.adapter(prev_xs)
-            hs += self.itoh(last_x)
+            # Ensure shapes match before summation. The encoder returns
+            # (seq_len, batch, features); squeeze if the time dimension is singleton.
+            if base.dim() == hs.dim() + 1 and base.size(0) == 1:
+                base = base.squeeze(0)
+            hs = hs + base
         else:
-            hs = self.itoh(last_x)
-            #print(hs.shape)
+            hs = base
 
         return hs
 
