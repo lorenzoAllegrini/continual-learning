@@ -105,7 +105,7 @@ class NASABenchmark(Benchmark):
             callbacks (Optional[List[Callback]]): a list of callbacks to be used during benchmark
             call_every_ms (int): the interval at which the callbacks are called
         """
-    
+
         callback_handler = CallbackHandler(
             callbacks=callbacks if callbacks is not None else [],
             call_every_ms=call_every_ms,
@@ -300,7 +300,9 @@ class NASABenchmark(Benchmark):
                 train_channel = Subset(train_channel, indices[eval_size:])
 
             callback_handler.start()
-            strategy.train_experience(train_channel, task_label, eval_data=eval_channel)
+            epochs_trained = strategy.train_experience(
+                train_channel, task_label, eval_data=eval_channel
+            )
             callback_handler.stop()
             results.update(
                 {
@@ -308,6 +310,7 @@ class NASABenchmark(Benchmark):
                     for k, v in callback_handler.collect(reset=True).items()
                 }
             )
+            results["train_epochs"] = epochs_trained
             logging.info(
                 f"Training time on channel {channel_id}: {results['train_time']}"
             )
