@@ -18,7 +18,7 @@ from spaceai.data.utils import seq_collate_fn
 def main():
     
     benchmark = NASABenchmark(
-        run_id="nasa_lstm",
+        run_id="nasa_pnn_lstm_2",
         exp_dir="experiments",
         seq_length=250,
         n_predictions=1,
@@ -26,51 +26,51 @@ def main():
     )
     callbacks = [SystemMonitorCallback()]
 
-    channels = NASA.channel_ids
+    for sensor_channels in [NASA.smap_channels, NASA.msl_channels]:
+        groups = set([el.split("-")[0] for el in sensor_channels])
+        for i, group in enumerate(groups):
+            group_channels = [ch for ch in sensor_channels if ch.startswith(group)]
+            print(f"{i+1}/{len(group_channels)}: {group}")
+            sample_channel = NASA("datasets", group_channels[0], mode="anomaly", train=False)
 
-    sample_channel = NASA("datasets", channels[0], mode="anomaly", train=False)
+            predictor = PNN(
+                num_layers=2,
+                in_features=sample_channel.in_features_size,
+                hidden_features_per_column=80,
+                adapter='mlp',
+                base_predictor_args=dict(
+                    hidden_sizes=[80],
+                    dropout=0.3,
+                    washout=249,
+                ),      
+            )
+            
+            for i, channel_id in enumerate(group_channels):
 
-    predictor = PNN(
-        num_layers=2,
-        in_features=sample_channel.in_features_size,
-        hidden_features_per_column=80,
-        adapter='mlp',
-        base_predictor_args=dict(
-            hidden_sizes=[80],
-            dropout=0.3,
-            washout=249,
-        ),
-        
-    )
-    
-    for i, channel_id in enumerate(channels):
-        print(f"{i+1}/{len(channels)}: {channel_id}")
+                detector = Telemanom(
+                    pruning_factor=0.13, force_early_anomaly=channel_id == "C-2"
+                )
 
-        nasa_channel = NASA("datasets", channel_id, mode="anomaly", train=False)
+                criterion = nn.MSELoss()
+                optimizer_factory = lambda predictor: optim.Adam(predictor.parameters(), lr=0.001)
+                epochs = 35
 
-        detector = Telemanom(
-            pruning_factor=0.13, force_early_anomaly=channel_id == "C-2"
-        )
+                # definizione della strategia naive
+                trainer = CLTrainer(model=predictor, optimizer_factory=optimizer_factory,
+                                criterion=criterion, device="cuda" if torch.cuda.is_available() else "cpu",
+                                collate_fn=seq_collate_fn(n_inputs=2, mode="time"), train_epochs=epochs,
+                                patience_before_stopping=3, min_delta=0.0)
 
-        criterion = nn.MSELoss()
-        optimizer_factory = lambda predictor: optim.Adam(predictor.parameters(), lr=0.001)
-        epochs = 35
-
-        # definizione della strategia naive
-        trainer = CLTrainer(model=predictor, optimizer_factory=optimizer_factory,
-                          criterion=criterion, device="cuda" if torch.cuda.is_available() else "cpu",
-                          collate_fn=seq_collate_fn(n_inputs=2, mode="time"))
-
-        benchmark.run_pnn(
-            channel_id,
-            predictor,
-            detector,
-            strategy=trainer,
-            overlapping_train=True,
-            restore_predictor=False,
-            callbacks=callbacks,
-            perc_eval=None
-        )
+                benchmark.run_pnn(
+                    channel_id,
+                    predictor,
+                    detector,
+                    strategy=trainer,
+                    overlapping_train=True,
+                    restore_predictor=False,
+                    callbacks=callbacks,
+                    perc_eval=0.2
+                )
 
     results_df = pd.read_csv(os.path.join(benchmark.run_dir, "results.csv"))
     tp = results_df["true_positives"].sum()

@@ -300,7 +300,7 @@ class NASABenchmark(Benchmark):
                 train_channel = Subset(train_channel, indices[eval_size:])
 
             callback_handler.start()
-            strategy.train_experience(train_channel, task_label)
+            strategy.train_experience(train_channel, task_label, eval_data=eval_channel)
             callback_handler.stop()
             results.update(
                 {
