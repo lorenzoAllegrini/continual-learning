@@ -72,8 +72,7 @@ class MLPAdapter(nn.Module):
         self.V = nn.Linear(in_features * num_prev_modules, out_features_per_column)
         self.alphas = nn.Parameter(torch.randn(num_prev_modules))
         self.U = nn.Linear(out_features_per_column, out_features_per_column)
-        
-        
+
         self.V.requires_grad = True
         self.alphas.requires_grad = True
         self.U.requires_grad = True
@@ -95,7 +94,7 @@ class MLPAdapter(nn.Module):
             else:
                 el = el.to(dtype=self.alphas.dtype, device=self.alphas.device)
             scaled.append(self.alphas[i] * el)
-        x = torch.cat(scaled, dim=1)        
+        x = torch.cat(scaled, dim=1)
         x = self.U(self.activation(self.V(x)))
         return x
 
@@ -122,11 +121,11 @@ class PNNColumn(nn.Module):
         self.in_features = in_features
         self.out_features_per_column = out_features_per_column
         self.num_prev_modules = num_prev_modules
-        
+
         if self.in_features != base_predictor_args["hidden_sizes"][-1]:
             base_predictor_args["washout"] = 0
         else:
-            base_predictor_args["washout"] = 249  
+            base_predictor_args["washout"] = 249
         self.itoh = _LSTM_Encoder(input_size=self.in_features, **base_predictor_args)
         if adapter == "linear":
             self.adapter = LinearAdapter(
@@ -152,20 +151,22 @@ class PNNColumn(nn.Module):
         if self.adapter is not None and len(prev_xs) > 0:
             # Adapter expects 2-D tensors (batch, features). Remove any singleton
             # sequence dimension from lateral inputs when present.
-            prev_xs = np.array([
-                px.squeeze(0) if px.dim() == 3 and px.size(0) == 1 else px
-                for px in prev_xs
-            ])
-            prev_xs = prev_xs[:,0]
+            prev_xs = np.array(
+                [
+                    px.squeeze(0) if px.dim() == 3 and px.size(0) == 1 else px
+                    for px in prev_xs
+                ]
+            )
+            prev_xs = prev_xs[:, 0]
             assert (
                 len(prev_xs) == self.num_prev_modules
             ), f"Expected {self.num_prev_modules} prev modules, got {len(prev_xs)}"
-      
+
             hs = self.adapter(prev_xs)
-            
+
             # Ensure shapes match before summation. The encoder returns
             # (seq_len, batch, features); squeeze if the time dimension is singleton.
-            
+
             hs = hs + base
         else:
             hs = base
@@ -242,7 +243,9 @@ class PNNLayer(MultiTaskModule):
             if task_label in self.task_to_module_idx:
                 return
             if len(self.task_to_module_idx) == 0:
-                self.task_to_module_idx[task_label] = 0  # prima colonna già creata nel __init__
+                self.task_to_module_idx[task_label] = (
+                    0  # prima colonna già creata nel __init__
+                )
                 return
             self.task_to_module_idx[task_label] = self.num_columns
             self._add_column()
@@ -269,14 +272,14 @@ class PNNLayer(MultiTaskModule):
         """
         col_idx = self.task_to_module_idx[task_label]
         hs = []
-        #print(self.columns)
-        
+        # print(self.columns)
+
         for ii in range(col_idx + 1):
-            #print(f"x: {np.array(x[: ii + 1]).shape}")
-            
+            # print(f"x: {np.array(x[: ii + 1]).shape}")
+
             hs.append(self.columns[ii](x[: ii + 1]))
-            #print(f"hs: {hs if len(hs) > 1 else len(hs)}")
-        
+            # print(f"hs: {hs if len(hs) > 1 else len(hs)}")
+
         return hs
 
 
@@ -295,6 +298,7 @@ class PNN(MultiTaskModule):
         hidden_features_per_column=100,
         adapter="mlp",
         base_predictor_args=None,
+        use_adapter=True,
     ):
         """
         :param num_layers: number of layers (default=1)
@@ -302,6 +306,7 @@ class PNN(MultiTaskModule):
         :param hidden_features_per_column:
             number of hidden units for each column
         :param adapter: adapter type. One of {'linear', 'mlp'} (default='mlp')
+        :param use_adapter: disable lateral adapters when False
         """
         super().__init__()
         assert num_layers >= 1
@@ -325,6 +330,7 @@ class PNN(MultiTaskModule):
                 hidden_features_per_column,
                 adapter=adapter,
                 base_predictor_args=base_predictor_args,
+                use_adapter=use_adapter,
             )
             self.layers.append(lay)
         self.regressor = MultiHeadRegressor(
@@ -340,7 +346,7 @@ class PNN(MultiTaskModule):
         self.regressor.adaptation(experience)
 
     def forward_single_task(self, x, task_label):
-        #x = x.contiguous().view(x.size(0), self.in_features)
+        # x = x.contiguous().view(x.size(0), self.in_features)
 
         num_columns = self.layers[0].num_columns
         col_idx = self.layers[-1].task_to_module_idx[task_label]
@@ -354,4 +360,3 @@ class PNN(MultiTaskModule):
 
 # Backward compatibility
 LSTMPNN = PNN
-
