@@ -18,7 +18,7 @@ from spaceai.data.utils import seq_collate_fn
 def main():
     
     benchmark = NASABenchmark(
-        run_id="nasa_pnn_lstm_2",
+        run_id="nasa_pnn_lstm_adapters_es",
         exp_dir="experiments",
         seq_length=250,
         n_predictions=1,
