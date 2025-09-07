@@ -40,12 +40,23 @@ class LinearAdapter(nn.Module):
         for _ in range(num_prev_modules):
             m = nn.Linear(in_features, out_features_per_column)
             self.lat_layers.append(m)
+        self.num_prev_modules = num_prev_modules
 
     def forward(self, x):
+        if self.num_prev_modules == 0:
+            return 0
         assert len(x) == self.num_prev_modules
-        hs = []
+        hs: List[torch.Tensor] = []
         for ii, lat in enumerate(self.lat_layers):
-            hs.append(lat(x[ii]))
+            el = x[ii]
+            if not isinstance(el, torch.Tensor):
+                el = torch.as_tensor(el)
+            assert el.dim() == 2, (
+                "Inputs to LinearAdapter should have two dimensions: "
+                "<batch_size, num_features>."
+            )
+            el = el.to(dtype=lat.weight.dtype, device=lat.weight.device)
+            hs.append(lat(el))
         return sum(hs)
 
 
